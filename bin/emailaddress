@@ -1,0 +1,8 @@
+#!/usr/bin/env ruby
+#For now: bundle exec bin/emailaddress allen@example.com
+require 'email_address'
+require 'JSON'
+
+ARGV.each do |arg|
+  puts EmailAddress.standard(arg).data.to_json
+end

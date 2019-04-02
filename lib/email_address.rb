@@ -2,6 +2,26 @@
 
 # EmailAddress parses and validates email addresses against RFC standard,
 # conventional, canonical, formats and other special uses.
+#
+# Email Address Subtypes:
+#   * Standard: RFC-2822 Compliant
+#   * Loose: A simple validator, nothing complex, not too rigid
+#   * Conventional: General format of in-use addresses, superceded by provider
+#   * Canonical: General format, simplified, no tags
+#   * Digest: MD5 of input address
+#   * Redacted: Changed to a fingerprint, {DIGEST}@domain.tld
+#   * Munged: Obscured for online hiding, a***@g***.com
+#   * SRS, PVRS, BATV: Forms for encoding in sending domain formats
+#   * VERP: Return Path version (from Qmail)
+#
+# General Usage:
+#
+#     emailaddr = EmailAddress.standard(email_address_string, config_override: "value")
+#     emailaddr.valid?
+#     EmailAddress.canonical(email_address_string).valid?
+#     EmailAddress.valid?(email_address_string)
+#     EmailAddress.new(email_address_string).redact!
+#
 module EmailAddress
 
   require "email_address/config"
@@ -11,6 +31,8 @@ module EmailAddress
   require "email_address/rewriter"
   require "email_address/address"
   require "email_address/version"
+
+  require "email_address/standard"
   require "email_address/active_record_validator" if defined?(ActiveModel)
   if defined?(ActiveRecord) && ::ActiveRecord::VERSION::MAJOR >= 5
     require "email_address/email_address_type"
@@ -39,7 +61,7 @@ module EmailAddress
   #   Returns the address encoded for SRS forwarding. Pass a local
   #   secret to use in options[:secret]
   class << self
-    (%i[valid? error normal redact munge canonical reference base srs] &
+    (%i[valid? error normal redact munge canonical reference base srs ] &
      EmailAddress::Address.public_instance_methods
     ).each do |proxy_method|
       define_method(proxy_method) do |*args, &block|
@@ -48,6 +70,10 @@ module EmailAddress
     end
   end
 
+
+  def self.standard(email_address_string, config={})
+    EmailAddress::Standard.new(email_address_string, config)
+  end
 
   # Creates an instance of this email address.
   # This is a short-cut to Email::Address::Address.new
