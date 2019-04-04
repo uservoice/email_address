@@ -329,54 +329,6 @@ module EmailAddress
     # DNS
     ############################################################################
 
-    # True if the :dns_lookup setting is enabled
-    def dns_enabled?
-      [:mx, :a].include?(EmailAddress::Config.setting(:host_validation))
-    end
-
-    # Returns: [official_hostname, alias_hostnames, address_family, *address_list]
-    def dns_a_record
-      @_dns_a_record = "0.0.0.0" if @config[:dns_lookup] == :off
-      @_dns_a_record ||= Socket.gethostbyname(self.dns_name)
-    rescue SocketError # not found, but could also mean network not work
-      @_dns_a_record ||= []
-    end
-
-    # Returns an array of EmailAddress::Exchanger hosts configured in DNS.
-    # The array will be empty if none are configured.
-    def exchangers
-      #return nil if @config[:host_type] != :email || !self.dns_enabled?
-      @_exchangers ||= EmailAddress::Exchanger.cached(self.dns_name, @config)
-    end
-
-    # Returns a DNS TXT Record
-    def txt(alternate_host=nil)
-      Resolv::DNS.open do |dns|
-        records = dns.getresources(alternate_host || self.dns_name,
-                         Resolv::DNS::Resource::IN::TXT)
-        records.empty? ? nil : records.map(&:data).join(" ")
-      end
-    end
-
-    # Parses TXT record pairs into a hash
-    def txt_hash(alternate_host=nil)
-      fields = {}
-      record = self.txt(alternate_host)
-      return fields unless record
-
-      record.split(/\s*;\s*/).each do |pair|
-        (n,v) = pair.split(/\s*=\s*/)
-        fields[n.to_sym] = v
-      end
-      fields
-    end
-
-    # Returns a hash of the domain's DMARC (https://en.wikipedia.org/wiki/DMARC)
-    # settings.
-    def dmarc
-      self.dns_name ? self.txt_hash("_dmarc." + self.dns_name) : {}
-    end
-
     ############################################################################
     # Validation
     ############################################################################

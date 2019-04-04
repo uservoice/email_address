@@ -4,12 +4,15 @@ module EmailAddress
 
   # Represents an RFC-2822 Email Address with parser/validator
   # Acts as a base class for other email address types
+  # Use as Email Address standard syntax checker and parser.
+
   class Standard
     attr_reader :email_address_string
     attr_reader :local_name
     attr_reader :local_comment_left
     attr_reader :local_comment_right
     attr_reader :domain_name
+    attr_reader :domain_type
     attr_reader :domain_comment_left
     attr_reader :domain_comment_right
     attr_reader :errors
@@ -21,12 +24,14 @@ module EmailAddress
       parse(email_address_string)
     end
 
+    # Returns a hash of email address parts and errors
     def data
       { email_address_string: self.email_address_string,
         local_name: self.local_name,
         local_comment_left: self.local_comment_left,
         local_comment_right: self.local_comment_right,
         domain_name: domain_name,
+        domain_type: domain_type,
         domain_comment_left: domain_comment_left,
         domain_comment_right: domain_comment_right,
         valid: self.valid?,
@@ -39,12 +44,11 @@ module EmailAddress
       @errors.length == 0
     end
 
-    # Regexen to grab the next token in match_data[1] and the rest of the string in match_data[2]
-    UNICODE_TOKEN_ATOM  = /^([\p{L}\p{N}\-\!\#\$\%\&\'\*\+\-\/\=\?\^\`\{\|\}\~\(\)]+)(.*)/i;
+    # Tokenizer Regexen to parse off the next token. Token in match_data[1] and the rest of the string in match_data[2]
+    UNICODE_TOKEN_ATOM  = /^([\p{L}\p{N}\-\!\#\$\%\&\'\*\+\/\=\?\^\`\{\|\}\~]+)(.*)/i;
     UNICODE_QUOTED_ATOM = /^(\"(?:\\[\"\\]|[\x20-\x21\x23-\x2F\x3A-\x40\x5B\x5D-\x60\x7B-\x7E\p{L}\p{N}])+\")(.*)/i;
     ASCII_TOKEN_ATOM    = /^([\w\!\#\$\%\&\'\*\+\-\/\=\?\^\`\{\|\}\~]+)(.*)/i; #  AZaz09_!#$%&'*+-/=?^`{|}~
-    ASCII_QUOTED_ATOM   = /^(\"(?:\\[\"\\]|[\x20-\x21\x23-\x2F\x3A-\x40\x5B\x5D-\x60\x7B-\x7EA-Za-z0-9])+\")(.*)/i;
-    #                     /^        \\ \"     sp  !   #    /   :    @   [   ]    `   {    ~  AZaz  09
+    ASCII_QUOTED_ATOM   = /^(\"(?:\\[\"\\]|[\x20-\x21\x23-\x2F\x3A-\x40\x5B\x5D-\x60\x7B-\x7EA-Za-z0-9])+\")(.*)/i; # Addl space "(),:;<>@[\] escaped \\ and \"
     COMMENT_TEXT        = /^(\(.*?\))(.*)/i;
     DOMAIN_NAME_REGEX   = /^( [\p{L}\p{N}]+ (?: (?: \-{1,2} | \.) [\p{L}\p{N}]+ )* )(.*)/x
 
@@ -54,10 +58,11 @@ module EmailAddress
     #   @local_name - Essentially, the left-hand side of the @
     #   @local_comment_left, @local_comment_right - Comments removed from the local part
     #   @domain_name - Essentially, the right-hand side of the @
+    #   @domain_type - :dns, :ipv4, :ipv6, :localhost?, :non_fqdn
     #   @domain_comment_left, @domain_comment_right - Comments removed from the domain part
     #   @errors - Any parsing errors encountered
     def parse(email_address_string)
-      @email_address_string = email_address_string
+      @email_address_string = fold_white_space(email_address_string)
       if @config[:unicode]
         @token_atom, @quoted_atom = UNICODE_TOKEN_ATOM, UNICODE_QUOTED_ATOM
       else
@@ -66,7 +71,10 @@ module EmailAddress
       @local_name = @local_comment_left = @local_comment_right = ''
       @valid = true
       domain_string = parse_local(email_address_string)
-      parse_domain(domain_string)
+      remaining = parse_domain(domain_string)
+      if !@config[:parse_within] && remaining > ''
+        add_error(:invalid_address, "Unexpected Extra text", remaining)
+      end
       [@local_name, @domain_name]
     end
 
@@ -77,7 +85,7 @@ module EmailAddress
           if @local_name == ''
             str = parse_quoted_token(str)
           else
-            add_error(:invalid_address, "Unexpected Quote")
+            add_error(:invalid_address, "Unexpected Quote", str)
             str = str[1..]
           end
         when '('
@@ -97,6 +105,7 @@ module EmailAddress
           str = parse_atom(str)
         end
       end
+      @local_name = transform_case(@local_name, @config[:case])
       if @local_name.length == 0
         add_error(:invalid_address, "Missing Local")
       elsif @local_name.length > 64
@@ -169,6 +178,7 @@ module EmailAddress
 
         else # (label.)* label  name: [1..63]  total: [1..253]
           str = parse_domain_name(str)
+          @domain_type = :dns # :localhost :non_fqdn
         end
       end
       if @domain_name.length == 0
@@ -180,7 +190,12 @@ module EmailAddress
     def parse_domain_ip(str)
       if str.start_with?('[') # (Comment)
         m = str.match(Host::IPv4_HOST_REGEX)
-        m ||= str.match(Host::IPv6_HOST_REGEX)
+        if m
+          @domain_type = :ipv4
+        else
+          m = str.match(Host::IPv6_HOST_REGEX)
+          @domain_type = :ipv6 if m
+        end
         if m
           if @domain_name == ''
             @domain_name += m[1]
@@ -222,13 +237,24 @@ module EmailAddress
     end
 
     def add_error(message, hint=nil, data=nil)
-      p [:add_error, message, hint, data];
+      #p [:add_error, message, hint, data];
       @valid = false
       @errors << {message: message, hint: hint, data:data}
     end
 
     def fold_white_space(str)
       str.gsub(/\s+/, ' ')
+    end
+
+    def transform_case(str, style)
+      case style
+      when :lower
+        str.downcase
+      when :upper
+        str.upcase
+      else
+        str
+      end
     end
   end
 end
