@@ -1,28 +1,26 @@
-# Email Address
-
 [![Gem Version](https://badge.fury.io/rb/email_address.svg)](http://rubygems.org/gems/email_address)
 [![Build Status](https://travis-ci.org/afair/email_address.svg?branch=v0.1)](https://travis-ci.org/afair/email_address)
 [![Code Climate](https://codeclimate.com/github/afair/email_address/badges/gpa.svg)](https://codeclimate.com/github/afair/email_address)
 
-The `email_address` gem provides a ruby language library for working
-with email addresses.
+The `email_address` gem provides a ruby language library for inspecting,
+validating and transforming email addresses according to major Email
+Service Providers and conventional usage.
 
-By default, it validates against conventional usage,
-the format preferred for user email addresses.
-It can be configured to validate against RFC "Standard" formats,
-common email service provider formats, and perform DNS validation.
+While there are simple alternatives for validating email addresses,
+this gem aims to identify likely formats of user and automated email addresses.
+Additionally, it aims to create a distinction of well-formed user addresses.
+Addresses that are syntactically valid according to RFC standards,
+but fail user format validation are most likely erroneous.
 
-Using `email_address` to validate user email addresses results in
-fewer "false positives" due to typing errors and gibberish data.
-It validates syntax more strictly for popular email providers,
-and can deal with gmail's "optional dots" in addresses.
+> Warning: Version 0.2.x introduces a major rework and expansion of existing
+> ideas from previous versions. If you are using a previous version, you
+> may want to wait until this code stabilizes.
 
-It provides Active Record (Rails) extensions, including an
-address validator and attributes API custom datatypes.
+For Ruby on Rails applications, see the forthcoming
+[email_address-rails](https://github.com/afair/email_address-rails/)
+gem which provides additional integrations with ActiveRecord.
 
-Requires Ruby 2.0 or later.
-
-Looking for a Javascript version of this library? Check out the
+There is also a port of this library to Javascript as the
 [email_address](https://www.npmjs.com/package/email_address) npm module.
 
 ## Quick Start
@@ -32,15 +30,23 @@ To quickly validate email addresses, use the valid? and error helpers.
 a basic error message.
 
 ```ruby
-EmailAddress.valid? "allen@google.com" #=> true
+EmailAddress.valid? "allen@ruby-lang.org" #=> true
 EmailAddress.error "allen@bad-d0main.com" #=> "Invalid Host/Domain Name"
 ```
 
-`EmailAddress` deeply validates your email addresses. It checks:
+## Validating Email Addresses
 
-* Host name format and DNS setup
-* Mailbox format according to "conventional" form. This matches most used user
-  email accounts, but is a subset of the RFC specification.
+These validations are most useful to detect data input errors. The only
+way to see if the address is correct is to send it an email message,
+and ensure no bounced message is returned.
+
+Validation check include:
+
+* [RFC 2822](https://tools.ietf.org/html/rfc2822) Syntax Validation
+* [RFC 6530](https://tools.ietf.org/html/rfc6530) Internationalized Email (not implemented)
+* DNS Validation
+* Local address (user account or mailbox) levels
+* ESP Validation
 
 It does not check:
 
@@ -64,6 +70,24 @@ Most mail servers do not yet support Unicode mailboxes, so the default here is A
 EmailAddress.error "Pelé@google.com" #=> "Invalid Recipient/Mailbox"
 EmailAddress.valid? "Pelé@google.com", local_encoding: :unicode #=> true
 ```
+
+## Email Address Validation Levels
+
+Depending on your application, you can validate addresses to the level
+and format you need. These levels, from least to most restrictive
+(as user addresses) are:
+
+* :invalid - Does not meet RFC specifications
+* :standard - Meets RFC specifications
+* :simple - Does not need/contain quotable characters
+* :relaxed - Is of one or more "words" optionally followed by single punctutation character: ._-!#$%&'*+=?
+* :user - Relaxed, but a more restrictive set of punctuation: ._-'+
+* :esp - Valid according to the Email Service Provider (ESP) rules
+
+### Why you shouldn't accept RFC Validation along
+
+The RFC's covering email addresses govern syntax of ALL email message components:
+headers, and were not specialized for a sane subset of characters for addresses.
 
 ## Background
 
