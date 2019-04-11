@@ -97,6 +97,12 @@ module EmailAddress
   require 'yaml'
 
   class Config
+    @new_config = {
+      local_x: nil,
+      domain_x: nil,
+      dns_x: nil
+    }
+
     @config = {
       dns_lookup:         :mx,  # :mx, :a, :off
       sha1_secret:        "",

@@ -8,32 +8,44 @@ module EmailAddress
 
   # Looks up DBS information with caching, and returns to caller
   class DNS
-    #include Enumerable
-
-    @@dns_cache = {}
-
     DEFAULT_CACHE_SIZE=1000
-    UNKNOWN_DOMAIN = ""
+    UNKNOWN_HOST = ""
     DEFAULT_IP = "0.0.0.0"
     DEFAULT_MX = [["example.com", "0.0.0.0", 1]]
-    LOOKUP = %i( disabled lru_file_cache custom_cache lru_cache no_cache )
+    LOOKUP = %i( off file_cache custom_cache no_cache )
 
     attr_reader :dns_name
+    attr_accessor :from_cache
+    @@dns_cache = {}
+    @@cache_semaphore = Mutex.new
 
     # Takes an ASCII/Punycode domain name string and the configuration
     # We cache instances here with a LRU Cache up to 100 or value in the
     # EMAIL_ADDRESS_CACHE_SIZE environment variable
     def self.lookup(dns_name, config={})
-      @dns_cache ||= {}
-      @cache_size ||= config[:dns_cache_size] || ENV['EMAIL_ADDRESS_CACHE_SIZE'].to_i || 1000
-      if @dns_cache.has_key?(dns_name)
-        o = @dns_cache.delete(dns_name)
-        @dns_cache[dns_name] = o # LRU cache, move to end
-      elsif @dns_cache.size >= @cache_size
-        @dns_cache.delete(@dns_cache.keys.first)
-        @dns_cache[dns_name] = new(dns_name, config)
-      else
-        @dns_cache[dns_name] = new(dns_name, config)
+      dns = nil
+      @@cache_semaphore.synchronize do
+        if @@dns_cache.size == 0
+          @cache_size = (config[:dns_cache_size] || ENV['EMAIL_ADDRESS_CACHE_SIZE'] || 1000).to_i
+          #p [:cache, @cache_size, @@dns_cache.keys]
+        end
+        if @@dns_cache.has_key?(dns_name)
+          dns = @@dns_cache.delete(dns_name)
+          @@dns_cache[dns_name] = dns # LRU cache, move to end
+          dns.from_cache = true
+        elsif @@dns_cache.size >= @cache_size
+          @@dns_cache.delete(@@dns_cache.keys.first)
+          dns = @@dns_cache[dns_name] = new(dns_name, config)
+        else
+          dns = @@dns_cache[dns_name] = new(dns_name, config)
+        end
+      end
+      dns
+    end
+
+    def self.clear_cache
+      @@cache_semaphore.synchronize do
+        @@dns_cache = {}
       end
     end
 
@@ -41,30 +53,106 @@ module EmailAddress
     def initialize(dns_name, config={})
       @dns_name = dns_name
       @config = config
+      @from_cache = false
+      @semaphore = Mutex.new
     end
 
     def valid?
-      mxers.count > 0
+      mx_records.count > 0
     end
 
     # True if the :dns_lookup setting is enabled
-    def enabled?
-      [:mx, :a].include?(EmailAddress::Config.setting(:host_validation))
-    end
+    #def enabled?
+    #  [:mx, :a].include?(EmailAddress::Config.setting(:host_validation))
+    #end
 
     # Returns the IP Address, "0.0.0.0" as defined in the A Record. Do not use
     # this for email; use the MX record lookup instead.
-    # Returns DEFAULT_IP if lookups disabled, UNKNOWN_DOMAIN on error
+    # Returns DEFAULT_IP if lookups disabled, UNKNOWN_HOST on error
     def ip
       if @_a
         @_a
       elsif @config[:dns_lookup] == :off
         return @_a = DEFAULT_IP
       else
-        cache [self.dns_name, 'a'].join(":") do |key|
-          @_a = Socket.gethostbyname(self.dns_name)
-        rescue SocketError # not found, but could also mean network not work
-          @_a = UNKNOWN_DOMAIN
+        @_a = host_ip(self.dns_name)
+      end
+    end
+
+    def mx_ipv4
+      mx_hosts.map {|mx| mx[:ipv4] }
+    end
+
+    def mx_ipv6
+      mx_hosts.map {|mx| mx[:ipv6] }
+    end
+
+    def mx_hosts
+      hosts = []
+      mx_records.each do |mx|
+        host = mx.exchange.to_s
+        if host > " "
+          hosts << {host:host,
+                    ipv4: a_record,
+                    ipv6: aaaa_record,
+                    preference: mx.preference}
+        end
+      end
+      hosts
+    end
+
+    def dmarc_record
+      txt_hash("_dmarc")
+    end
+
+    #def ptr_record
+    #end
+
+    # EG: v=spf1 include:spf.ruby-lang.org ?alll
+    def spf_record
+      txt_records.find {|r| r =~ /v=spf1/ }
+    end
+
+    # A TXT record for _domainkey.example.com with name/key pairs with DKIM signing info
+    # See: https://en.wikipedia.org/wiki/DomainKeys_Identified_Mail#Verification
+    # Selector is the DKIM s=xxx value from the Email headers and should find
+    # the DKIM key in $selector._domainkey.$dns_name in the TXT record
+    def dkim_record(selector)
+      txt_hash(selector+"._domainkey")
+    end
+
+    # Simple matcher, takes an array of CIDR addresses (ip/bits) and strings.
+    # Returns true if any MX IP matches the CIDR or host name ends in string.
+    # Ex: match?(%w(127.0.0.1/32 0:0:1/64 .yahoodns.net))
+    # Note: Your networking stack may return IPv6 addresses instead of IPv4
+    # when both are available. If matching on IP, be sure to include both
+    # IPv4 and IPv6 forms for matching for hosts running on IPv6 (like gmail).
+    def matches?(rules)
+      rules = Array(rules)
+      rules.each do |rule|
+        if rule.include?("/")
+          return rule if in_cidr?(rule)
+        else
+          mx_hosts.each  {|mx| return rule if mx[:host].end_with?(rule) }
+        end
+      end
+      false
+    end
+
+    #def self.clear_file_cache(max_days=2)
+    #  dir = @config[:dns_cache_dir] || "/tmp"
+    #  p dir
+    #end
+
+    private
+
+    def host_ip(host)
+      return DEFAULT_IP if @config[:dns_lookup] == :off
+      cache(host, :ip) do
+        begin
+          IPSocket::getaddress(host)
+        rescue SocketError # not found, but could also mean network not work or it could mean one record doesn't resolve an address
+          DEFAULT_IP # UNKNOWN_HOST
         end
       end
     end
@@ -73,52 +161,24 @@ module EmailAddress
       if @_mx
         @_mx
       elsif @config[:dns_lookup] == :off
-        return @_mx = DEFAULT_MX
+        DEFAULT_MX
       else
-        cache [self.dns_name, 'mx'] do |key|
-          @_mx = Socket.gethostbyname(self.dns_name)
-        rescue SocketError # not found, but could also mean network not work
-          @_mx = []
-        end
+        @_mx = dns_records(:mx).sort {|a,b| a.preference <=> b.preference }
       end
     end
 
-    def dmarc_record
-      self.dns_name ? self.txt_hash("_dmarc." + self.dns_name) : {}
+    def a_record
+      dns_records(:a).map {|rec| rec.address.to_s }.first
     end
 
-    def ptr_record
-    end
-
-    # EG: v=spf1 include:spf.ruby-lang.org ?alll
-    def spf_record
-      txt_hash()
-    end
-
-    # A TXT record for _domainkey.example.com with name/key pairs with DKIM signing info
-    #    o         "-" All iemail is signed, '~' some email is signed
-    #    t         test mode
-    #    r         responsible email address
-    #    v         DKIM1  (Version)
-    #    k         rsa (key type)
-    #    p         "..." Signing key
-    #
-    # EG: v=DKIM1\; k=rsa\; p=a9383... (Sometimes your semicolons must be escaped)
-    # See: https://en.wikipedia.org/wiki/DomainKeys_Identified_Mail#Verification
-    def dkim_record
-      txt_hash("_domainkey")
-    end
-
-    private
-
-    def a_records
-      dns_records(:a).map {|rec| red.address.to_s }
+    def aaaa_record
+      dns_records(:aaaa).map {|rec| rec.address.to_s }.first
     end
 
     # Parses TXT record pairs into a hash
     def txt_hash(subdomain=nil)
       fields = {}
-      record = self.txt(subdomain)
+      record = txt(subdomain)
       return fields unless record
 
       record.split(/\s*;\s*/).each do |pair|
@@ -128,12 +188,22 @@ module EmailAddress
       fields
     end
 
-    # Returns a hash of the domain's DMARC (https://en.wikipedia.org/wiki/DMARC)
     # Returns a contacenation of the TXT records from the host or subhomain,
-    # or empty string on error
-    def txt(subdomain=nil)
-      cache([self.dns_name, subdomain, :txt]) do
-				dns_records(:txt).map(&:data).join(" ")
+    def txt(subdomain=nil, joiner=" ")
+      txt_records(subdomain).join(joiner)
+    end
+
+    # Returns an array of TXT.data fields
+    def txt_records(subdomain=nil)
+      @txt_cache ||= {}
+      if @txt_cache.has_key?(subdomain)
+        @txt_cache[subdomain]
+      elsif @config[:dns_lookup] == :off
+        return ""
+      else
+        cache(self.dns_name, subdomain, :txt) do
+          @txt_cache[subdomain] = dns_records(:txt, subdomain).map(&:data)
+        end
       end
     end
 
@@ -159,7 +229,8 @@ module EmailAddress
         rec.instance_variables.each do |n|
           v = rec.instance_variable_get(n)
           hash[n.to_s[1..]] = v.class.name == 'Integer' ? v : v.to_s
-        hash
+          hash
+        end
       end
     end
 
@@ -167,50 +238,44 @@ module EmailAddress
     # If a block is passed, it gets each record, and the results of block are returned
     # ips = dns_records(:a).map { |record| a.address.to_s } #=> [ip, ...]
     # ips = dns_records(:txt).map(&:data)
-    def dns_records(record_name=:a, subdomain=nil)
+    def dns_records(record_name=:a, subdomain=nil, &block)
+      return [] if @config[:dns_lookup] == :off
       host = subdomain ? [subdomain, self.dns_name].join(".") : self.dns_name
-      Resolv::DNS.open do |dns|
-        dns.getresources(host, DNS_RECORD_TYPES[record_name.to_sym])
+      cache(host, record_name, block) do
+        Resolv::DNS.open do |dns|
+          dns.getresources(host, DNS_RECORD_TYPES[record_name.to_sym])
+        end
       end
     end
 
     # Caches a DNS Lookup in a file store (useful for off-line/testing) or a
     # user-provided cache (that saves in memcache/redis/etc.).
-    def cache(key, &block)
-      key = Array(key).join(":")
-      if @config[:dns_cache] == :file
-        file_cache(key, block)
-      elsif @config[:dns_cache_custom]
-        @config[:dns_cache_custom].call(key, block)
-      else
-        call(key, block)
+    def cache(*keys, &block)
+      key = keys.join(":")
+      @semaphore.synchronize do
+        if @config[:dns_cache] == :file
+          file_cache(key, &block)
+        elsif @config[:dns_cache_custom]
+          @config[:dns_cache_custom].call(key, &block)
+        else
+          block.call(key)
+        end
       end
     end
 
     # VCR-like File System Caching for testing/performance
-    # data = fs_cache_for(domain, 'MX') { request(...) }
+    # data = file_cache(domain, 'MX') { request(...) }
     def file_cache(*names, &block)
-      if @config[:save_dns_dir]
-        fn = File.join(@config[:save_dns_dir], names.join(":"))
-        if File.exist?(fn)
-          data = JSON.parse(File.read(fn))
-        else
-          data = block.call
-          File.write(fn, JSON.generate(data))
-        end
+      dir = @config[:dns_cache_dir] || "/tmp"
+      fn = File.join(dir, "email_address:dns:"+names.join(":"))
+      if File.exist?(fn)
+        data = Marshal.load(File.read(fn))
       else
         data = block.call
+        p [:file_cache, data]
+        File.write(fn, Marshal.dump(data))
       end
       data
-    end
-
-    # Returns a DNS TXT Record
-    def txt(alternate_host=nil)
-      Resolv::DNS.open do |dns|
-        records = dns.getresources(alternate_host || self.dns_name,
-                                   Resolv::DNS::Resource::IN::TXT)
-        records.empty? ? nil : records.map(&:data).join(" ")
-      end
     end
 
     # Returns: [["mta7.am0.yahoodns.net", "66.94.237.139", 1], ["mta5.am0.yahoodns.net", "67.195.168.230", 1], ["mta6.am0.yahoodns.net", "98.139.54.60", 1]]
@@ -242,42 +307,18 @@ module EmailAddress
       @_domains ||= mxers.map {|m| EmailAddress::Host.new(m.first).domain_name }.sort.uniq
     end
 
-    # Returns an array of MX IP address (String) for the given email domain
-    def mx_ips
-      return ["0.0.0.0"] if @config[:dns_lookup] == :off
-      mxers.map {|m| m[1] }
-    end
-
-    # Simple matcher, takes an array of CIDR addresses (ip/bits) and strings.
-    # Returns true if any MX IP matches the CIDR or host name ends in string.
-    # Ex: match?(%w(127.0.0.1/32 0:0:1/64 .yahoodns.net))
-    # Note: Your networking stack may return IPv6 addresses instead of IPv4
-    # when both are available. If matching on IP, be sure to include both
-    # IPv4 and IPv6 forms for matching for hosts running on IPv6 (like gmail).
-    def matches?(rules)
-      rules = Array(rules)
-      rules.each do |rule|
-        if rule.include?("/")
-          return rule if self.in_cidr?(rule)
-        else
-          self.each {|mx| return rule if mx[:host].end_with?(rule) }
-        end
-      end
-      false
-    end
-
     # Given a cidr (ip/bits) and ip address, returns true on match. Caches cidr object.
     def in_cidr?(cidr)
       if cidr.include?(":")
         c = NetAddr::IPv6Net.parse(cidr)
-        return true if mx_ips.find do |ip|
+        return true if mx_ipv6.find do |ip|
           next unless ip.include?(":")
           rel = c.rel NetAddr::IPv6Net.parse(ip)
           !rel.nil? && rel >= 0
         end
       elsif cidr.include?(".")
         c = NetAddr::IPv4Net.parse(cidr)
-        return true if mx_ips.find do |ip|
+        return true if mx_ipv4.find do |ip|
           next if ip.include?(":")
           rel = c.rel NetAddr::IPv4Net.parse(ip)
           !rel.nil? && rel >= 0
@@ -285,5 +326,5 @@ module EmailAddress
       end
       false
     end
-    end
   end
+end

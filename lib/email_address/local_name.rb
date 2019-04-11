@@ -14,18 +14,19 @@ module EmailAddress
   # * Standard  Email Address local parts contain characters that would
   #             would quoting or escaping, properly done so.
   #
-  #             Quotes Unnecessary:  az09_ . - ! # $ % & ' * + = ? ^ ` { | }
+  #             Quotes Unnecessary:  AZaz09_ . - ! # $ % & ' * + = ? ^ ` { | }
   #             Quotes Required   :  space " ( ) , : ; < > @ [ \ ]
   #             Example: "@user name"@example.com
   #
   # * Simple    Contains any valid order of characters not needing to be quoted.
   #
-  #             Characters:  az09_ . - ! # $ % & ' * + = ? ^ ` { | }
-  #             Pattern: [ az09_.-!#$%&'*+=?^`{|} ]+
+  #             Characters:  AZaz09_ . - ! # $ % & ' * + = ? ^ ` { | }
+  #             Pattern: [ AZaz09_.-!#$%&'*+=?^`{|} ]+
   #             Example: /^.+regexp*n$/@example.com
   #
   # * Relaxed   One or more words, each followed by an optional punctuation character
   #             with all the symbols allowed in "simple"
+  #             Uppercase characters should be converted to lowercase.
   #             This version should work with special automated email addresses
   #             like return paths, VERP, SRS and BATV encoded addresses.
   #
@@ -40,7 +41,8 @@ module EmailAddress
   #             Pattern: word ( [ .-'+ ]* word )*
   #             Example: miles.o'brian+tag@example.com
   #
-  # * ESP       Valid according to any pref-defined Email Service Provider formats
+  # * ESP       Valid according to any pref-defined Email Service Provider formats:
+  #             Google (gmail), Microsoft (hotmail/live/msn/outlook), Yahoo, AOL, Apple, etc.
   #-----------------------------------------------------------------------------
   # Other forms of the email address local name:
   #
@@ -76,10 +78,15 @@ module EmailAddress
     def initialize(email_address, config={})
       @email_address = email_address
       @local_name = email_address.local_name
+      edit
+    end
+
+    def edit
+      @local_name.downcase! if @config[:local_downcase]
     end
 
     def to_s
-      # localcomment + local + @ + domaincommment + domain
+      self.local_name
     end
 
     # Returns a hash of email address parts and errors

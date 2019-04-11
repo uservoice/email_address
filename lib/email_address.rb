@@ -30,6 +30,7 @@ module EmailAddress
   require "email_address/local"
   require "email_address/rewriter"
   require "email_address/address"
+  require "email_address/dns"
   require "email_address/version"
 
   require "email_address/standard"
