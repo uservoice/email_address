@@ -1,4 +1,3 @@
-
 require 'simpleidn'
 require 'resolv'
 require 'netaddr'

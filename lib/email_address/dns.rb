@@ -3,8 +3,49 @@
 require 'resolv'
 require 'netaddr'
 require 'socket'
+require 'singleton'
 
 module EmailAddress
+
+  class DNSCache
+    include Singleton
+    DEFAULT_CACHE_SIZE=1000
+    attr_reader :from_cache
+
+    def initialize(config={})
+      @semaphore = Mutex.new
+      @size = (config[:dns_cache_size] || ENV['EMAIL_ADDRESS_CACHE_SIZE'] || DEFAULT_CACHE_SIZE).to_i
+      @cache = {}
+    end
+
+    # Takes an ASCII/Punycode domain name string and the configuration
+    # We cache instances here with a LRU Cache up to 100 or value in the
+    # EMAIL_ADDRESS_CACHE_SIZE environment variable
+    def lookup(dns_name, config={})
+      dns = nil
+      @from_cache = false
+      @semaphore.synchronize do
+        if @cache.has_key?(dns_name)
+          dns = @cache.delete(dns_name)
+          @cache[dns_name] = dns # LRU cache, move to end
+          @from_cache = true
+        elsif @cache.size >= @size
+          @cache.delete(@cache.keys.first)
+          dns = @cache[dns_name] = DNS.new(dns_name, config)
+        else
+          dns = @cache[dns_name] = DNS.new(dns_name, config)
+        end
+      end
+      dns
+    end
+
+    def clear
+      @semaphore.synchronize do
+        @cache = {}
+      end
+    end
+
+  end
 
   # Looks up DBS information with caching, and returns to caller
   class DNS
@@ -15,45 +56,10 @@ module EmailAddress
     LOOKUP = %i( off file_cache custom_cache no_cache )
 
     attr_reader :dns_name
-    attr_accessor :from_cache
-    @@dns_cache = {}
-    @@cache_semaphore = Mutex.new
-
-    # Takes an ASCII/Punycode domain name string and the configuration
-    # We cache instances here with a LRU Cache up to 100 or value in the
-    # EMAIL_ADDRESS_CACHE_SIZE environment variable
-    def self.lookup(dns_name, config={})
-      dns = nil
-      @@cache_semaphore.synchronize do
-        if @@dns_cache.size == 0
-          @cache_size = (config[:dns_cache_size] || ENV['EMAIL_ADDRESS_CACHE_SIZE'] || 1000).to_i
-          #p [:cache, @cache_size, @@dns_cache.keys]
-        end
-        if @@dns_cache.has_key?(dns_name)
-          dns = @@dns_cache.delete(dns_name)
-          @@dns_cache[dns_name] = dns # LRU cache, move to end
-          dns.from_cache = true
-        elsif @@dns_cache.size >= @cache_size
-          @@dns_cache.delete(@@dns_cache.keys.first)
-          dns = @@dns_cache[dns_name] = new(dns_name, config)
-        else
-          dns = @@dns_cache[dns_name] = new(dns_name, config)
-        end
-      end
-      dns
-    end
-
-    def self.clear_cache
-      @@cache_semaphore.synchronize do
-        @@dns_cache = {}
-      end
-    end
-
     # Use this to make a non-cached version. Otherwise, use .lookup()
     def initialize(dns_name, config={})
       @dns_name = dns_name
       @config = config
-      @from_cache = false
       @semaphore = Mutex.new
     end
 
@@ -201,9 +207,7 @@ module EmailAddress
       elsif @config[:dns_lookup] == :off
         return ""
       else
-        cache(self.dns_name, subdomain, :txt) do
-          @txt_cache[subdomain] = dns_records(:txt, subdomain).map(&:data)
-        end
+        @txt_cache[subdomain] = dns_records(:txt, subdomain).map(&:data)
       end
     end
 
