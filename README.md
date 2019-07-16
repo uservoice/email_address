@@ -40,6 +40,18 @@ These validations are most useful to detect data input errors. The only
 way to see if the address is correct is to send it an email message,
 and ensure no bounced message is returned.
 
+Here are a few parts of the RFC specification you should avoid:
+
+* Case-sensitive local parts: `First.Last@example.com`
+* Spaces and Special Characters: `"():;<>@[\\]`
+* Quoting and Escaping Requirements: `"first \"nickname\" last"@example.com`
+* Comment Parts: `(comment)mailbox@example.com`
+* IP and IPv6 addresses as hosts: `mailbox@[127.0.0.1]`
+* Non-ASCII (7-bit) characters in the local part: `Pelé@example.com`
+* Validation by voodoo regular expressions
+* Gmail allows ".." in addresses since they are not meaningful, but
+  the standard does not.
+
 Validation check include:
 
 * [RFC 2822](https://tools.ietf.org/html/rfc2822) Syntax Validation
@@ -84,7 +96,21 @@ and format you need. These levels, from least to most restrictive
 * :user - Relaxed, but a more restrictive set of punctuation: ._-'+
 * :esp - Valid according to the Email Service Provider (ESP) rules
 
-### Why you shouldn't accept RFC Validation along
+There are also several "forms" of email addresses:
+
+* :original - The format passed to `EmailAddress`.
+* :normal - Normalized address is lower case (if configured) and cleaned up.
+* :mailbox - Normalized address with any tags (subaddresses) removed.
+* :canonical - Address is re-written as a base user/mailbox address. Non-identifiable character such as gmail-dots and "tags" are removed.
+* :reference - MD5 (and sometimes SHA1) digests of email addresses are used to query the address while maintaining privacy.
+* :redacted - Addresses that have been removed from your database (such as GDPR) but maintain a placeholder for accounting.
+* :munged - An obsfucated address to be transmitted on public web pages, email messages, etc.
+* :srs - Sender Rewriting Scheme (SRS) allows an address to be forwarded from the original owner and encoded to be used with the domain name of the sender.
+* :batv - Bound Address Tag Validation.
+* :prvs - Simple Private Signature.
+* :verp - Variable Envelope Return Path, this embeds the recipient address within a special return path address.
+
+### Why you shouldn't RFC-Validate User Email Addresses
 
 The RFC's covering email addresses govern syntax of ALL email message components:
 headers, and were not specialized for a sane subset of characters for addresses.

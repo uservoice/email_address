@@ -1,298 +1,286 @@
 # frozen_string_literal: true
 
-require 'digest/sha1'
-require 'digest/md5'
-
 module EmailAddress
-  # Implements the Email Address container, which hold the Local
-  # (EmailAddress::Local) and Host (Email::AddressHost) parts.
+
+  # Represents an RFC-2822 Email Address with parser/validator
+  # Acts as a base class for other email address types
+  # Use as Email Address standard syntax checker and parser.
+
   class Address
-    include Comparable
-    include EmailAddress::Rewriter
+    attr_reader :address # string "local@domain"
+    attr_reader :original
+    attr_reader :errors
+    attr_reader :local
+    attr_reader :domain
 
-    attr_accessor :original, :local, :host, :config, :reason
-
-    CONVENTIONAL_REGEX = /\A#{::EmailAddress::Local::CONVENTIONAL_MAILBOX_WITHIN}
-                           @#{::EmailAddress::Host::DNS_HOST_REGEX}\z/x
-    STANDARD_REGEX     = /\A#{::EmailAddress::Local::STANDARD_LOCAL_WITHIN}
-                           @#{::EmailAddress::Host::DNS_HOST_REGEX}\z/x
-    RELAXED_REGEX      = /\A#{::EmailAddress::Local::RELAXED_MAILBOX_WITHIN}
-                           @#{::EmailAddress::Host::DNS_HOST_REGEX}\z/x
-
-    # Given an email address of the form "local@hostname", this sets up the
-    # instance, and initializes the address to the "normalized" format of the
-    # address. The original string is available in the #original method.
-    def initialize(email_address, config={})
-      @config        = config # This needs refactoring!
-      email_address  = (email_address || "").strip
-      @original      = email_address
-      email_address  = parse_rewritten(email_address) unless config[:skip_rewrite]
-      local, host    = EmailAddress::Address.split_local_host(email_address)
-
-      @host         = EmailAddress::Host.new(host, config)
-      @config       = @host.config
-      @local        = EmailAddress::Local.new(local, @config, @host)
-      @error        = @error_message = nil
+    def initialize(address, config={})
+      @config = EmailAddress::Config.new(config)
+      @errors = []
+      @local = EmailAddress::Local.new(nil, config)
+      @domain = EmailAddress::Domain.new(nil, config)
+      self.address = address
     end
 
-    # Given an email address, this returns an array of [local, host] parts
-    def self.split_local_host(email)
-      if lh = email.match(/(.+)@(.+)/)
-        lh.to_a[1,2]
-      else
-        [email, '']
-      end
+    def address=(address_string)
+      @errors = []
+      @original = address_string
+      @address = address_string
+      parse(address_string)
+      #@errors += @local.errors
+      #@errors += domain.errors
+      #@errors += provider.errors
     end
 
-    ############################################################################
-    # Local Part (left of @) access
-    # * local: Access full local part instance
-    # * left: everything on the left of @
-    # * mailbox: parsed mailbox or email account name
-    # * tag: address tag (mailbox+tag)
-    ############################################################################
-
-    # Everything to the left of the @ in the address, called the local part.
-    def left
-      self.local.to_s
+    # Returns a hash of email address parts and errors
+    def data
+      { address: self.address,
+        domain: @domain.data,
+        local: @local.data,
+        provider: nil, #self.domain.provider_name
+        valid: valid?,
+        errors: @errors,
+      }
     end
-
-    # Returns the mailbox portion of the local port, with no tags. Usually, this
-    # can be considered the user account or role account names. Some systems
-    # employ dynamic email addresses which don't have the same meaning.
-    def mailbox
-      self.local.mailbox
-    end
-
-    # Returns the tag part of the local address, or nil if not given.
-    def tag
-      self.local.tag
-    end
-
-    # Retuns any comments parsed from the local part of the email address.
-    # This is retained for inspection after construction, even if it is
-    # removed from the normalized email address.
-    def comment
-      self.local.comment
-    end
-
-    ############################################################################
-    # Host Part (right of @) access
-    # * host: Access full local part instance (alias: right)
-    # * hostname: everything on the right of @
-    # * provider: determined email service provider
-    ############################################################################
-
-    # Returns the host name, the part to the right of the @ sign.
-    def host_name
-      @host.host_name
-    end
-    alias :right :host_name
-    alias :hostname :host_name
-
-    # Returns the ESP (Email Service Provider) or ISP name derived
-    # using the provider configuration rules.
-    def provider
-      @host.provider
-    end
-
-    ############################################################################
-    # Address methods
-    ############################################################################
-
-    # Returns the string representation of the normalized email address.
-    def normal
-      if !@original
-        @original
-      elsif self.local.to_s.size == 0
-        ""
-      elsif self.host.to_s.size == 0
-        self.local.to_s
-      else
-        "#{self.local.to_s}@#{self.host.to_s}"
-      end
-    end
-    alias :to_s :normal
 
     def inspect
-      "#<EmailAddress::Address:0x#{self.object_id.to_s(16)} address=\"#{self.to_s}\">"
+      "<#EmailAddress::Address "+data.inspect+">"
     end
 
-    # Returns the canonical email address according to the provider
-    # uniqueness rules. Usually, this downcases the address, removes
-    # spaves and comments and tags, and any extraneous part of the address
-    # not considered a unique account by the provider.
-    def canonical
-      c = self.local.canonical
-      c += "@" + self.host.canonical if self.host.canonical && self.host.canonical > " "
-      c
-    end
-
-    # True if the given address is already in it's canonical form.
-    def canonical?
-      self.canonical == self.to_s
-    end
-
-    # The base address is the mailbox, without tags, and host.
-    def base
-      self.mailbox + "@" + self.hostname
-    end
-
-    # Returns the redacted form of the address
-    # This format is defined by this libaray, and may change as usage increases.
-    # Takes either :sha1 (default) or :md5 as the argument
-    def redact(digest=:sha1)
-      raise "Unknown Digest type: #{digest}" unless %i(sha1 md5).include?(digest)
-      return self.to_s if self.local.redacted?
-      r = %Q({#{send(digest)}})
-      r += "@" + self.host.to_s if self.host.to_s && self.host.to_s > " "
-      r
-    end
-
-    # True if the address is already in the redacted state.
-    def redacted?
-      self.local.redacted?
-    end
-
-    # Returns the munged form of the address, by default "mailbox@domain.tld"
-    # returns "ma*****@do*****".
-    def munge
-      [self.local.munge, self.host.munge].join("@")
-    end
-
-    # Returns and MD5 of the canonical address form. Some cross-system systems
-    # use the email address MD5 instead of the actual address to refer to the
-    # same shared user identity without exposing the actual address when it
-    # is not known in common.
-    def reference(form=:base)
-      Digest::MD5.hexdigest(self.send(form))
-    end
-    alias :md5 :reference
-
-    # This returns the SHA1 digest (in a hex string) of the canonical email
-    # address. See #md5 for more background.
-    def sha1(form=:base)
-      Digest::SHA1.hexdigest((self.send(form)||"") + (@config[:sha1_secret]||""))
-    end
-
-    #---------------------------------------------------------------------------
-    # Comparisons & Matching
-    #---------------------------------------------------------------------------
-
-    # Equal matches the normalized version of each address. Use the Threequal to check
-    # for match on canonical or redacted versions of addresses
-    def ==(other_email)
-      self.to_s == other_email.to_s
-    end
-    alias :eql? :==
-    alias :equal? :==
-
-    # Return the <=> or CMP comparison operator result (-1, 0, +1) on the comparison
-    # of this addres with another, using the canonical or redacted forms.
-    def same_as?(other_email)
-      if other_email.is_a?(String)
-        other_email = EmailAddress::Address.new(other_email)
+    def to_s(level=:normal)
+      if level == :normal
+        [local.name, domain]
       end
 
-      self.canonical   == other_email.canonical ||
-        self.redact    == other_email.canonical ||
-        self.canonical == other_email.redact
-    end
-    alias :include? :same_as?
-
-    # Return the <=> or CMP comparison operator result (-1, 0, +1) on the comparison
-    # of this addres with another, using the normalized form.
-    def <=>(other_email)
-      self.to_s <=> other_email.to_s
     end
 
-    # Address matches one of these Matcher rule patterns
-    def matches?(*rules)
-      rules.flatten!
-      match   = self.local.matches?(rules)
-      match ||= self.host.matches?(rules)
-      return match if match
-
-      # Does "root@*.com" match "root@example.com" domain name
-      rules.each do |r|
-        if r =~ /.+@.+/
-          return r if File.fnmatch?(r, self.to_s)
-        end
-      end
-      false
+    def self.valid?(name, config={})
+      new(name,config).valid?
     end
 
-    #---------------------------------------------------------------------------
-    # Validation
-    #---------------------------------------------------------------------------
+    # Validation at this level is purely syntactic. No DNS validation.
+    def valid?
+      @errors.length == 0
+    end
 
-    # Returns true if this address is considered valid according to the format
-    # configured for its provider, It test the normalized form.
-    def valid?(options={})
-      @error = nil
-      unless self.local.valid?
-        return set_error self.local.error
-      end
-      unless self.host.valid?
-        return set_error self.host.error_message
-      end
-      if @config[:address_size] && !@config[:address_size].include?(self.to_s.size)
-        return set_error :exceeds_size
-      end
-      if @config[:address_validation].is_a?(Proc)
-        unless @config[:address_validation].call(self.to_s)
-          return set_error :not_allowed
-        end
+    # Tokenizer Regexen to parse off the next token. Token in match_data[1] and the rest of the string in match_data[2]
+    UNICODE_TOKEN_ATOM  = /^([\p{L}\p{N}\-\!\#\$\%\&\'\*\+\/\=\?\^\`\{\|\}\~]+)(.*)/i;
+    UNICODE_QUOTED_ATOM = /^(\"(?:\\[\"\\]|[\x20-\x21\x23-\x2F\x3A-\x40\x5B\x5D-\x60\x7B-\x7E\p{L}\p{N}])+\")(.*)/i;
+    ASCII_TOKEN_ATOM    = /^([\w\!\#\$\%\&\'\*\+\-\/\=\?\^\`\{\|\}\~]+)(.*)/i; #  AZaz09_!#$%&'*+-/=?^`{|}~
+    ASCII_QUOTED_ATOM   = /^(\"(?:\\[\"\\]|[\x20-\x21\x23-\x2F\x3A-\x40\x5B\x5D-\x60\x7B-\x7EA-Za-z0-9])+\")(.*)/i; # Addl space "(),:;<>@[\] escaped \\ and \"
+    COMMENT_TEXT        = /^(\(.*?\))(.*)/i;
+    DOMAIN_NAME_REGEX   = /^( [\p{L}\p{N}]+ (?: (?: \-{1,2} | \.) [\p{L}\p{N}]+ )* )(.*)/x
+
+    private
+
+    # Parses the incoming email address string into these components:
+    #   @local.name - Essentially, the left-hand side of the @
+    #   @local.comment_left, @local_comment_right - Comments removed from the local part
+    #   @domain.name - Essentially, the right-hand side of the @
+    #   @domain.type - :dns, :ipv4, :ipv6, :localhost?, :non_fqdn
+    #   @domain.comment_left, @domain_comment_right - Comments removed from the domain part
+    #   @errors - Any parsing errors encountered
+    def parse(address)
+      @address = fold_white_space(address)
+      if @config[:unicode]
+        @token_atom, @quoted_atom = UNICODE_TOKEN_ATOM, UNICODE_QUOTED_ATOM
       else
-        return false unless self.local.valid?
-        return false unless self.host.valid?
+        @token_atom, @quoted_atom = ASCII_TOKEN_ATOM, ASCII_QUOTED_ATOM
       end
-      if @config[:address_validation] == :smtp
-
+      @local_name = @local_comment_left = @local_comment_right = ''
+      @valid = true
+      domain_string = parse_local(address)
+      remaining = parse_domain(domain_string)
+      if !@config[:parse_within] && remaining > ''
+        add_error(:invalid_address, "Unexpected Extra text", remaining)
       end
-      true
+      [@local_name, @domain_name]
     end
 
-    # Connects to host to test if user can receive email. This should NOT be performed
-    # as an email address check, but is provided to assist in problem resolution.
-    # If you abuse this, you *could* be blocked by the ESP.
-    def connect
-      begin
-        smtp = Net::SMTP.new(self.host_name || self.ip_address)
-        smtp.start(@config[:smtp_helo_name] || 'localhost')
-        smtp.mailfrom @config[:smtp_mail_from] || 'postmaster@localhost'
-        smtp.rcptto self.to_s
-        #p [:connect]
-        smtp.finish
-        true
-      rescue Net::SMTPUnknownError => e
-        set_error(:address_unknown, e.to_s)
-      rescue Net::SMTPFatalError => e
-        set_error(:address_unknown, e.to_s)
-      rescue SocketError => e
-        set_error(:address_unknown, e.to_s)
-      ensure
-        if smtp && smtp.started?
-          smtp.finish
+    def parse_local(str)
+      while str.length > 0
+        case str[0]
+        when '"'
+          if @local_name == ''
+            str = parse_quoted_token(str)
+          else
+            add_error(:invalid_address, "Unexpected Quote", str)
+            str = str[1..]
+          end
+        when '('
+          updates = parse_comment(str, @local_name, @local_comment_left, @local_comment_right)
+          str, @local_name, @local_comment_left, @local_comment_right = *updates
+          @local.comment_left = @local_comment_left
+          @local.comment_right = @local_comment_right
+        when '@'
+          str = str[1..]
+          break
+        when '.'
+          @local_name += '.'
+          if str[1,1] == '"'
+            str = parse_quoted_token(str[1..])
+          else
+            str = parse_atom(str[1..])
+          end
+        else # atom
+          str = parse_atom(str)
         end
-        !!@error
+      end
+      @local_name = transform_case(@local_name, @config[:case])
+      if @local_name.length == 0
+        add_error(:invalid_address, "Missing Local")
+      elsif @local_name.length > 64
+        add_error(:invalid_address, "Local Part Too Long")
+      end
+      @local.name = @local_name
+      str
+    end
+
+    def parse_atom(str)
+      m = str.match(@token_atom)
+      if m
+        @local_name += m[1]
+        str = m[2]
+      else
+        add_error(:invalid_address, "Unexpected character", str)
+        str = str[1..]
+      end
+      str
+    end
+
+    def parse_quoted_token(str)
+      return nil unless str.start_with?('"')
+      m = str.match(@quoted_atom)
+      if m
+        @local_name += m[1]
+        str = m[2]
+      else
+        add_error(:invalid_address, "Unexpected quote", str)
+        str = str[1..]
+      end
+      str
+    end
+
+    # Returns new [str, value, left, right]
+    # This is called by local and domain parsing
+    def parse_comment(str, value='', left='', right='')
+      m = str.match(COMMENT_TEXT)
+      if m
+        if value == ''
+          if left != ''
+            add_error(:invalid_address, "Unexpected Comment", str)
+          end
+          left += m[1] || ''
+        else
+          if right != ''
+            add_error(:invalid_address, "Unexpected Comment", str)
+          end
+          right += m[1]
+        end
+        str = m[2]
+      else
+        add_error(:invalid_address, "Unexpected Left Parenthesis", str)
+        str = str[1..]
+      end
+      [str, value, left, right]
+    end
+
+    def parse_domain(domain_string)
+      @domain_name = @domain_comment_left = @domain_comment_right = ''
+      str = domain_string
+      while str.length > 0
+        case str[0]
+        when '('
+          updates = parse_comment(str, @domain_name, @domain_comment_left, @domain_comment_right)
+          if updates
+            str, @domain_name, @domain_comment_left, @domain_comment_right = *updates
+            @domain.comment_left =  @domain_comment_left
+            @domain.comment_right = @domain_comment_right
+          end
+        when '['
+          str = parse_domain_ip(str)
+
+        else # (label.)* label  name: [1..63]  total: [1..253]
+          str = parse_domain_name(str)
+          @domain_type = :dns # :localhost :non_fqdn
+        end
+      end
+      if @domain_name.length == 0
+        add_error(:invalid_address, "Missing Domain")
+      end
+      self.domain.name = @domain_name
+      #p @domain.data
+      self.domain.format = @domain_type
+      str
+    end
+
+    def parse_domain_ip(str)
+      if str.start_with?('[') # (Comment)
+        m = str.match(Host::IPv4_HOST_REGEX)
+        if m
+          @domain_type = :ipv4
+        else
+          m = str.match(Host::IPv6_HOST_REGEX)
+          @domain_type = :ipv6 if m
+        end
+        if m
+          if @domain_name == ''
+            @domain_name += m[1]
+          else
+            add_error(:invalid_address, "Unexpected IP Address")
+          end
+          str = m[2]
+        else
+          add_error(:invalid_address, "Unexpected Left Bracket")
+          str = str[1..]
+        end
+      end
+      str
+    end
+
+    def parse_domain_name(str)
+      m = str.match(DOMAIN_NAME_REGEX)
+      if m
+        if @domain_name == ''
+          @domain_name += m[1]
+          if @domain_name.length > 253
+            add_error(:invalid_address, "Domain Name Too Long")
+          else
+            @domain_name.split(".").each do |label|
+              if label.length > 63
+                add_error(:invalid_address, "Domain Level Name Too Long")
+              end
+            end
+          end
+        else
+          add_error(:invalid_address, "Unexpected IP Address")
+        end
+        str = m[2]
+      else
+        add_error(:invalid_address, "Unexpected Character")
+        str = str[1..]
+      end
+      str
+    end
+
+    def add_error(message, hint=nil, data=nil)
+      #p [:add_error, message, hint, data];
+      @valid = false
+      @errors << {message: message, hint: hint, data:data}
+    end
+
+    def fold_white_space(str)
+      str.gsub(/\s+/, ' ')
+    end
+
+    def transform_case(str, style)
+      case style
+      when :lower
+        str.downcase
+      when :upper
+        str.upcase
+      else
+        str
       end
     end
-
-    def set_error(err, reason=nil)
-      @error = err
-      @reason= reason
-      @error_message = EmailAddress::Config.error_message(err)
-      false
-    end
-
-    def error_message
-      @error_message
-    end
-
-    def error
-      self.valid? ? nil : @error_message
-    end
-
   end
 end

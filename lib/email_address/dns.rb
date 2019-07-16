@@ -4,6 +4,7 @@ require 'resolv'
 require 'netaddr'
 require 'socket'
 require 'singleton'
+require 'ipaddr'
 
 module EmailAddress
 
@@ -22,6 +23,9 @@ module EmailAddress
     # We cache instances here with a LRU Cache up to 100 or value in the
     # EMAIL_ADDRESS_CACHE_SIZE environment variable
     def lookup(dns_name, config={})
+      if dns_name =~ /[^[:ascii:]]/
+        dns_name = ::SimpleIDN.to_ascii(dns_name)
+      end
       dns = nil
       @from_cache = false
       @semaphore.synchronize do
@@ -45,6 +49,11 @@ module EmailAddress
       end
     end
 
+		def dns_config
+      @_search_path ||= Resolv::DNS::Config.default_config_hash
+      #=> {:nameserver=>["2001:370:20::2", "192.168.11.1"], :search=>["example.com", "office.example.com"], :ndots=>1}
+		end
+
   end
 
   # Looks up DBS information with caching, and returns to caller
@@ -63,8 +72,18 @@ module EmailAddress
       @semaphore = Mutex.new
     end
 
-    def valid?
-      mx_records.count > 0
+    def valid?(recs=:mx)
+      recs ||= :mx
+      #p [:dbsv, @dns_name, mx_records.count, mx_ipv4.count, mx_ipv6.count ]
+      if recs == :mx
+        return mx_records.count > 0
+      elsif recs == :a
+        return mx_ipv4.count > 0
+      elsif recs == :aaaa
+        return mx_ipv4.count > 0
+      elsif recs == :host # ipv6 or ipv6
+        return mx_ipv4.count > 0 || mx_ipv6.count > 0
+      end
     end
 
     # True if the :dns_lookup setting is enabled
@@ -86,11 +105,11 @@ module EmailAddress
     end
 
     def mx_ipv4
-      mx_hosts.map {|mx| mx[:ipv4] }
+      mx_hosts.map {|mx| mx[:ipv4] }.flatten
     end
 
     def mx_ipv6
-      mx_hosts.map {|mx| mx[:ipv6] }
+      mx_hosts.map {|mx| mx[:ipv6] }.flatten
     end
 
     def mx_hosts
@@ -99,8 +118,8 @@ module EmailAddress
         host = mx.exchange.to_s
         if host > " "
           hosts << {host:host,
-                    ipv4: a_record,
-                    ipv6: aaaa_record,
+                    ipv4: a_records,
+                    ipv6: aaaa_records,
                     preference: mx.preference}
         end
       end
@@ -174,11 +193,19 @@ module EmailAddress
     end
 
     def a_record
-      dns_records(:a).map {|rec| rec.address.to_s }.first
+      a_records.first
     end
 
     def aaaa_record
-      dns_records(:aaaa).map {|rec| rec.address.to_s }.first
+      aaaa_records.first
+    end
+
+    def a_records
+      dns_records(:a).map {|rec| rec.address.to_s }
+    end
+
+    def aaaa_records
+      dns_records(:aaaa).map {|rec| rec.address.to_s }
     end
 
     # Parses TXT record pairs into a hash
@@ -276,7 +303,7 @@ module EmailAddress
         data = Marshal.load(File.read(fn))
       else
         data = block.call
-        p [:file_cache, data]
+        #p [:file_cache, data]
         File.write(fn, Marshal.dump(data))
       end
       data
@@ -311,24 +338,40 @@ module EmailAddress
       @_domains ||= mxers.map {|m| EmailAddress::Host.new(m.first).domain_name }.sort.uniq
     end
 
-    # Given a cidr (ip/bits) and ip address, returns true on match. Caches cidr object.
-    def in_cidr?(cidr)
-      if cidr.include?(":")
-        c = NetAddr::IPv6Net.parse(cidr)
-        return true if mx_ipv6.find do |ip|
-          next unless ip.include?(":")
-          rel = c.rel NetAddr::IPv6Net.parse(ip)
-          !rel.nil? && rel >= 0
-        end
-      elsif cidr.include?(".")
-        c = NetAddr::IPv4Net.parse(cidr)
-        return true if mx_ipv4.find do |ip|
-          next if ip.include?(":")
-          rel = c.rel NetAddr::IPv4Net.parse(ip)
-          !rel.nil? && rel >= 0
+    # Takes an IP strings or array of IP strings AND a CIDR/array of CIDR strings
+    # IP and CIDR can be IPv4 or IPv6; CIDR of the form "ipaddress[/bits]"
+    # Returns true if any IP is in any CIDR, otherwise false
+    def self.in_cidr?(ips, cidrs)
+      ips = Array(ips)
+      cidrs = Array(cidrs)
+      ips.each do |ip|
+        ip1 = IPAddr.new(ip) rescue nil
+        next unless ip1
+        cidrs.each do |cidr|
+          return true if IPAddr.new(cidr).include?(ip1) rescue false
         end
       end
       false
     end
+
+    # Given a cidr (ip/bits) and ip address, returns true on match. Caches cidr object.
+    #def in_cidr?(cidr)
+    #  if cidr.include?(":")
+    #    c = NetAddr::IPv6Net.parse(cidr)
+    #    return true if mx_ipv6.find do |ip|
+    #      next unless ip.include?(":")
+    #      rel = c.rel NetAddr::IPv6Net.parse(ip)
+    #      !rel.nil? && rel >= 0
+    #    end
+    #  elsif cidr.include?(".")
+    #    c = NetAddr::IPv4Net.parse(cidr)
+    #    return true if mx_ipv4.find do |ip|
+    #      next if ip.include?(":")
+    #      rel = c.rel NetAddr::IPv4Net.parse(ip)
+    #      !rel.nil? && rel >= 0
+    #    end
+    #  end
+    #  false
+    #end
   end
 end

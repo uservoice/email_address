@@ -8,8 +8,8 @@ Gem::Specification.new do |spec|
   spec.version       = EmailAddress::VERSION
   spec.authors       = ["Allen Fair"]
   spec.email         = ["allen.fair@gmail.com"]
-  spec.description   = %q{The EmailAddress Gem to work with and validate email addresses.}
-  spec.summary       = %q{This gem provides a ruby language library for working with and validating email addresses. By default, it validates against conventional usage, the format preferred for user email addresses. It can be configured to validate against RFC “Standard” formats, common email service provider formats, and perform DNS validation.}
+  spec.description   = %q{The EmailAddress Gem to introspect and validate email addresses using rules from major email service providers.}
+  spec.summary       = %q{This gem provides a ruby language library for working with and validating email addresses. By default, it defines address level to target RFC-Standard to user email addresses.}
   spec.homepage      = "https://github.com/afair/email_address"
   spec.license       = "MIT"
 
@@ -33,5 +33,4 @@ Gem::Specification.new do |spec|
   spec.add_development_dependency "irb"
 
   spec.add_dependency "simpleidn"
-  spec.add_dependency "netaddr", "~> 2.0"
 end

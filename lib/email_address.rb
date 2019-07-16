@@ -25,15 +25,15 @@
 module EmailAddress
 
   require "email_address/config"
-  require "email_address/exchanger"
-  require "email_address/host"
+  #require "email_address/exchanger"
+  require "email_address/domain"
   require "email_address/local"
+  require "email_address/provider"
   require "email_address/rewriter"
   require "email_address/address"
   require "email_address/dns"
   require "email_address/version"
 
-  require "email_address/standard"
   require "email_address/active_record_validator" if defined?(ActiveModel)
   if defined?(ActiveRecord) && ::ActiveRecord::VERSION::MAJOR >= 5
     require "email_address/email_address_type"
@@ -71,10 +71,6 @@ module EmailAddress
     end
   end
 
-
-  def self.standard(email_address_string, config={})
-    EmailAddress::Standard.new(email_address_string, config)
-  end
 
   # Creates an instance of this email address.
   # This is a short-cut to Email::Address::Address.new

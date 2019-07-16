@@ -1,119 +1,62 @@
 #encoding: utf-8
 require_relative '../test_helper'
 
-class TestAddress < Minitest::Test
-  def test_address
-    a = EmailAddress.new("User+tag@example.com")
-    assert_equal "user+tag", a.local.to_s
-    assert_equal "example.com", a.host.to_s
-    assert_equal "us*****@ex*****", a.munge
-    assert_equal :default, a.provider
+class TestStandardAddress < Minitest::Test
+  VALID_ADDRESSES = [
+    "simple@example.com", # From https://en.wikipedia.org/wiki/Email_address
+    "very.common@example.com",
+    "disposable.style.email.with+symbol@example.com",
+    "other.email-with-hyphen@example.com",
+    "fully-qualified-domain@example.com",
+    "user.name+tag+sorting@example.com", #(may go to user.name@example.com inbox depending on mail server)
+    "x@example.com", #(one-letter local-part)
+    "example-indeed@strange-example.com",
+    "admin@mailserver1", # (local domain name with no TLD, although ICANN highly discourages dotless email addresses)
+    "example@s.example", # (see the List of Internet top-level domains)
+    %q|" "@example.org|, # (space between the quotes)
+    %q|"john..doe"@example.org|, # (quoted double dot)
+    "First#Last+TAG@example.com",
+    "aasdf-34-.z@example.com",
+    %q((left)AZ.az.09.!#$%&'*+-/=?^_`{|}~." (),:;<>@[\\\\\"].."(right)@(left)example.com(right)), # Escaped: [\\\"]
+  ]
+  VALID_UNICODE_ADDRESSES = [
+    %q|ɹᴉɐℲuǝll∀@ɹᴉɐℲuǝll∀.ws|,
+  ]
+  INVALID_ADDRESSES = [
+    %q|Abc.example.com|, # no @ character
+    %q|A@b@c@example.com|, # only one @ is allowed outside quotation marks
+    %q|a"b(c)d,e:f;g<h>i[j\k]l@example.com|, #  none of the special characters in this local-part are allowed outside quotation marks
+    %q|just"not"right@example.com|, # quoted strings must be dot separated or the only element making up the local-part
+    %q|this is"not\allowed@example.com|, # spaces, quotes, and backslashes may only exist when within quoted strings and preceded by a backslash
+    %q|this\ still\"not\\allowed@example.com|, # even if escaped (preceded by a backslash), spaces, quotes, and backslashes must still be contained by quotes
+    %q|1234567890123456789012345678901234567890123456789012345678901234+x@example.com|, # local part is longer than 64 characters
+    %q|.user.@gmail.com|, #
+    %q|user.@gmail.com|, #
+    %q|user..name@example.com|, #
+  ]
+
+  def test_parse
+    a = EmailAddress.new("(lcl)User+tag(lcr)@(dcl)example.com(dcr)")
+    assert_equal "User+tag",    a.local.name
+    assert_equal "(lcl)",       a.local.comment_left
+    assert_equal "(lcr)",       a.local.comment_right
+    assert_equal "example.com", a.domain.name
+    assert_equal "(dcl)",       a.domain.comment_left
+    assert_equal "(dcr)",       a.domain.comment_right
+    assert_equal a.valid?,      true
   end
 
-  # LOCAL
-  def test_local
-    a = EmailAddress.new("User+tag@example.com")
-    assert_equal "user", a.mailbox
-    assert_equal "user+tag", a.left
-    assert_equal "tag", a.tag
+  def test_valid_addresses
+    VALID_ADDRESSES.each do |e|
+      a = EmailAddress.new(e)
+      assert a.valid?, e
+    end
   end
 
-  # HOST
-  def test_host
-    a = EmailAddress.new("User+tag@example.com")
-    assert_equal "example.com", a.hostname
-    #assert_equal :default, a.provider
-  end
-
-  # ADDRESS
-  def test_forms
-    a = EmailAddress.new("User+tag@example.com")
-    assert_equal "user+tag@example.com", a.to_s
-    assert_equal "user@example.com", a.base
-    assert_equal "user@example.com", a.canonical
-    assert_equal "{63a710569261a24b3766275b7000ce8d7b32e2f7}@example.com", a.redact
-    assert_equal "{b58996c504c5638798eb6b511e6f49af}@example.com", a.redact(:md5)
-    assert_equal "b58996c504c5638798eb6b511e6f49af", a.reference
-    assert_equal "6bdd00c53645790ad9bbcb50caa93880",  EmailAddress.reference("Gmail.User+tag@gmail.com")
-  end
-
-  # COMPARISON & MATCHING
-  def test_compare
-    a = ("User+tag@example.com")
-    #e = EmailAddress.new("user@example.com")
-    n = EmailAddress.new(a)
-    c = EmailAddress.new_canonical(a)
-    #r = EmailAddress.new_redacted(a)
-    assert_equal true, n == "user+tag@example.com"
-    assert_equal true, n >  "b@example.com"
-    assert_equal true, n.same_as?(c)
-    assert_equal true, n.same_as?(a)
-  end
-
-  def test_matches
-    a = EmailAddress.new("User+tag@gmail.com")
-    assert_equal false,  a.matches?('mail.com')
-    assert_equal 'google',  a.matches?('google')
-    assert_equal 'user+tag@',  a.matches?('user+tag@')
-    assert_equal 'user*@gmail*',  a.matches?('user*@gmail*')
-  end
-
-  def test_empty_address
-    a = EmailAddress.new("")
-    assert_equal "{9a78211436f6d425ec38f5c4e02270801f3524f8}", a.redact
-    assert_equal "", a.to_s
-    assert_equal "", a.canonical
-    assert_equal "518ed29525738cebdac49c49e60ea9d3", a.reference
-  end
-
-  # VALIDATION
-  def test_valid
-    assert EmailAddress.valid?("User+tag@example.com", host_validation: :a), "valid 1"
-    assert ! EmailAddress.valid?("User%tag@example.com", host_validation: :a), "valid 2"
-    assert EmailAddress.new("ɹᴉɐℲuǝll∀@ɹᴉɐℲuǝll∀.ws", local_encoding: :uncode, host_validation: :syntax ), "valid unicode"
-  end
-
-  def test_localhost
-    e = EmailAddress.new("User+tag.gmail.ws") # No domain means localhost
-    assert_equal '', e.hostname
-    assert_equal false, e.valid? # localhost not allowed by default
-    assert_equal EmailAddress.error("user1"), "Invalid Domain Name"
-    assert_equal EmailAddress.error("user1", host_local:true), "This domain is not configured to accept email"
-    assert_equal EmailAddress.error("user1@localhost", host_local:true), "This domain is not configured to accept email"
-    assert_nil EmailAddress.error("user2@localhost", host_local:true, dns_lookup: :off, host_validation: :syntax)
-  end
-
-  def test_regexen
-    assert "First.Last+TAG@example.com".match(EmailAddress::Address::CONVENTIONAL_REGEX)
-    assert "First.Last+TAG@example.com".match(EmailAddress::Address::STANDARD_REGEX)
-    assert_nil "First.Last+TAGexample.com".match(EmailAddress::Address::STANDARD_REGEX)
-    assert_nil "First#Last+TAGexample.com".match(EmailAddress::Address::CONVENTIONAL_REGEX)
-    assert "aasdf-34-.z@example.com".match(EmailAddress::Address::RELAXED_REGEX)
-  end
-
-  def test_srs
-    ea= "first.LAST+tag@gmail.com"
-    e = EmailAddress.new(ea)
-    s = e.srs("example.com")
-    assert s.match(EmailAddress::Address::SRS_FORMAT_REGEX)
-    assert EmailAddress.new(s).to_s == e.to_s
-  end
-
-  # Quick Regression tests for addresses that should have been valid (but fixed)
-  def test_issues
-    assert true, EmailAddress.valid?('test@jiff.com', dns_lookup: :mx) # #7
-    assert true, EmailAddress.valid?("w.-asdf-_@hotmail.com") # #8
-    assert true, EmailAddress.valid?("first_last@hotmail.com") # #8
-  end
-
-  def test_issue9
-    assert ! EmailAddress.valid?('example.user@foo.')
-    assert ! EmailAddress.valid?('ogog@sss.c')
-    assert ! EmailAddress.valid?('example.user@foo.com/')
-  end
-
-  def test_relaxed_normal
-    assert ! EmailAddress.new('a.c.m.e.-industries@foo.com').valid?
-    assert true, EmailAddress.new('a.c.m.e.-industries@foo.com', local_format: :relaxed).valid?
+  def test_invalid_addresses
+    INVALID_ADDRESSES.each do |e|
+      a = EmailAddress.new(e)
+      assert !a.valid?, e
+    end
   end
 end

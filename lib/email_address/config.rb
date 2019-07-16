@@ -103,7 +103,7 @@ module EmailAddress
       dns_x: nil
     }
 
-    @config = {
+    @@config = {
       dns_lookup:         :mx,  # :mx, :a, :off
       sha1_secret:        "",
       munge_string:       "*****",
@@ -132,7 +132,7 @@ module EmailAddress
     }
 
     # 2018-04: AOL and Yahoo now under "oath.com", owned by Verizon. Keeping separate for now
-    @providers = {
+    @@providers = {
       aol: {
         host_match:       %w(aol. compuserve. netscape. aim. cs.),
       },
@@ -177,28 +177,28 @@ module EmailAddress
 
     # Set multiple default configuration settings
     def self.configure(config={})
-      @config.merge!(config)
+      @@config.merge!(config)
     end
 
     def self.setting(name, *value)
       name = name.to_sym
-      @config[name] = value.first if value.size > 0
-      @config[name]
+      @@config[name] = value.first if value.size > 0
+      @@config[name]
     end
 
     # Returns the hash of Provider rules
     def self.providers
-      @providers
+      @@providers
     end
 
     # Configure or lookup a provider by name.
     def self.provider(name, config={})
       name = name.to_sym
       if config.size > 0
-        @providers[name] ||= @config.clone
-        @providers[name].merge!(config)
+        @@providers[name] ||= @config.clone
+        @@providers[name].merge!(config)
       end
-      @providers[name]
+      @@providers[name]
     end
 
     def self.error_message(name, locale="en")
@@ -212,8 +212,9 @@ module EmailAddress
     end
 
     def self.all_settings(*configs)
-      config = @config.clone
-      configs.each {|c| config.merge!(c) }
+      p [:all, configs]
+      config = @@config.clone
+      configs.each {|c| config.merge!(c) if c }
       config
     end
   end
