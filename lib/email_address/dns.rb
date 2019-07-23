@@ -1,7 +1,5 @@
 # frozen_string_literal: true
-
 require 'resolv'
-require 'netaddr'
 require 'socket'
 require 'singleton'
 require 'ipaddr'
