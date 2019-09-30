@@ -106,7 +106,7 @@ There are also several "forms" of email addresses:
 * :redacted - Addresses that have been removed from your database (such as GDPR) but maintain a placeholder for accounting.
 * :munged - An obsfucated address to be transmitted on public web pages, email messages, etc.
 * :srs - Sender Rewriting Scheme (SRS) allows an address to be forwarded from the original owner and encoded to be used with the domain name of the sender.
-* :batv - Bound Address Tag Validation.
+* :batv - Bounce Address Tag Validation.
 * :prvs - Simple Private Signature.
 * :verp - Variable Envelope Return Path, this embeds the recipient address within a special return path address.
 

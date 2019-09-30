@@ -16,28 +16,27 @@
 #
 # General Usage:
 #
-#     emailaddr = EmailAddress.standard(email_address_string, config_override: "value")
+#     emailaddr = EmailAddress.standard(email_address_string, setting: "value")
 #     emailaddr.valid?
 #     EmailAddress.canonical(email_address_string).valid?
 #     EmailAddress.valid?(email_address_string)
 #     EmailAddress.new(email_address_string).redact!
 #
 module EmailAddress
+  require 'email_address/address_correction'
+  require 'email_address/config'
+  require 'email_address/domain'
+  require 'email_address/local'
+  require 'email_address/provider'
+  require 'email_address/rewriter'
+  require 'email_address/address'
+  require 'email_address/dns'
+  require 'email_address/version'
 
-  require "email_address/config"
-  #require "email_address/exchanger"
-  require "email_address/domain"
-  require "email_address/local"
-  require "email_address/provider"
-  require "email_address/rewriter"
-  require "email_address/address"
-  require "email_address/dns"
-  require "email_address/version"
-
-  require "email_address/active_record_validator" if defined?(ActiveModel)
+  require 'email_address/active_record_validator' if defined?(ActiveModel)
   if defined?(ActiveRecord) && ::ActiveRecord::VERSION::MAJOR >= 5
-    require "email_address/email_address_type"
-    require "email_address/canonical_email_address_type"
+    require 'email_address/email_address_type'
+    require 'email_address/canonical_email_address_type'
   end
 
   # @!method self.valid?(email_address, options={})
@@ -62,7 +61,7 @@ module EmailAddress
   #   Returns the address encoded for SRS forwarding. Pass a local
   #   secret to use in options[:secret]
   class << self
-    (%i[valid? error normal redact munge canonical reference base srs ] &
+    (%i[valid? error normal redact munge canonical reference base srs] &
      EmailAddress::Address.public_instance_methods
     ).each do |proxy_method|
       define_method(proxy_method) do |*args, &block|
@@ -71,23 +70,24 @@ module EmailAddress
     end
   end
 
-
   # Creates an instance of this email address.
   # This is a short-cut to Email::Address::Address.new
-  def self.new(email_address, config={})
+  def self.new(email_address, config = {})
     EmailAddress::Address.new(email_address, config)
   end
 
-  def self.new_redacted(email_address, config={})
-    EmailAddress::Address.new(EmailAddress::Address.new(email_address, config).redact)
+  def self.new_redacted(email_address, config = {})
+    EmailAddress::Address.new(EmailAddress::Address.new(email_address,
+                                                        config).redact)
   end
 
-  def self.new_canonical(email_address, config={})
-    EmailAddress::Address.new(EmailAddress::Address.new(email_address, config).canonical, config)
+  def self.new_canonical(email_address, config = {})
+    email_address = EmailAddress::Address.new(email_address, config).canonical
+    EmailAddress::Address.new(email_address, config)
   end
 
   # Does the email address match any of the given rules
-  def self.matches?(email_address, rules, config={})
+  def self.matches?(email_address, rules, config = {})
     EmailAddress::Address.new(email_address, config).matches?(rules)
   end
 end

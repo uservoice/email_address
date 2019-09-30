@@ -6,12 +6,12 @@ class TestDomain < MiniTest::Test
   DOMAIN = EmailAddress::Domain # Save keystrokes
 
   def test_domain
-    a = DOMAIN.new("ruby-lang.org")
-    assert_equal "ruby-lang.org", a.name
-    assert_equal "ruby-lang.org", a.apex_domain
-    assert_equal "ruby-lang", a.apex_name
+    a = DOMAIN.new("rubygems.org")
+    assert_equal "rubygems.org", a.name
+    assert_equal "rubygems.org", a.apex_domain
+    assert_equal "rubygems", a.apex_name
     assert_equal "org", a.tld
-    assert_equal "ruby-lang.org.", a.fqdn
+    assert_equal "rubygems.org.", a.fqdn
     assert_nil   a.subdomain
   end
 
@@ -51,7 +51,7 @@ class TestDomain < MiniTest::Test
   def test_provider
     a = DOMAIN.new("my.yahoo.co.jp")
     assert_equal :yahoo, a.provider
-    a = DOMAIN.new("ruby-lang.org")
+    a = DOMAIN.new("rubygems.org")
     assert_equal :default, a.provider
   end
 
@@ -103,7 +103,7 @@ class TestDomain < MiniTest::Test
 
   def test_hosted_service
     #assert EmailAddress.valid?('test@jiff.com', dns_lookup: :mx)
-    assert ! EmailAddress.valid?('test@gmail.com', dns_lookup: :mx)
+    assert ! DOMAIN.valid?('test@gmail.com', dns_lookup: :mx)
   end
 
   def test_yahoo_bad_tld

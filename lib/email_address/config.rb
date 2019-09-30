@@ -158,6 +158,15 @@ module EmailAddress
     # Rails/I18n gem: t(email_address.error, scope: "email_address")
     @errors = YAML.load_file(File.dirname(__FILE__)+"/messages.yaml")
 
+    # If config is already one of us, return, else give a new
+    def self.get(config={})
+      if config.is_a?(EmailAddress::Config)
+        config
+      else
+        new(config)
+      end
+    end
+
     def initialize(config={})
       @config = @@config.merge(config)
       @config[:providers] = @@providers
@@ -173,6 +182,10 @@ module EmailAddress
 
     def provider(name, setting=nil)
       setting.nil ? @config[:providers][name] : @config[:providers][name][setting.to_sym]
+    end
+
+    def settings
+      @config
     end
 
     # Set multiple default configuration settings
@@ -212,7 +225,6 @@ module EmailAddress
     end
 
     def self.all_settings(*configs)
-      p [:all, configs]
       config = @@config.clone
       configs.each {|c| config.merge!(c) if c }
       config

@@ -271,9 +271,15 @@ module EmailAddress
       return [] if @config[:dns_lookup] == :off
       host = subdomain ? [subdomain, self.dns_name].join(".") : self.dns_name
       cache(host, record_name, block) do
-        Resolv::DNS.open do |dns|
+        start = Time.now
+        recs = Resolv::DNS.open do |dns|
           dns.getresources(host, DNS_RECORD_TYPES[record_name.to_sym])
         end
+        dur = Time.now - start
+        if dur > 1.0
+          puts "DNS Lookup of #{host} type #{record_name} took #{dur} seconds. :-("
+        end
+        recs
       end
     end
 

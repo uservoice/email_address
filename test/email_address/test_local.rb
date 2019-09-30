@@ -2,9 +2,10 @@
 require_relative '../test_helper'
 
 class TestLocal < MiniTest::Test
+  LOCAL = EmailAddress::Local
+
   INVALID_LOCALS =
     [ # Via https://en.wikipedia.org/wiki/Email_address
-      %Q{A@b@c},
       %Q{a"b(c)d,e:f;g<h>i[j\k]l},
       %Q{just"not"right},
       %Q{this is"not\allowed},
@@ -24,46 +25,86 @@ class TestLocal < MiniTest::Test
       %Q{"(comment)very.unusual.@.unusual.com"},
       %Q{#!$%&'*+-/=?^_`{}|~},
       %Q{" "},
-      %Q{"very.(),:;<>[]\\".VERY.\\"very@\\ \\"very\\".unusual"},
+      %Q{"very.(),:;<>[]".VERY."very@ \\"very".unusual},
       %Q{"()<>[]:,;@\\\"!#$%&'*+-/=?^_`{}| ~.a"},
       %Q{token." ".token},
       %Q{abc."defghi".xyz},
   ]
-  SIMPLE_LOCALS = []
-  RELAXED_LOCALS = []
-    #assert EmailAddress::Local.new("first.-last", local_format: :relaxed).valid?, "relax.-"
-    #assert EmailAddress::Local.new("a", local_format: :relaxed).valid?, "relax single"
-    #assert ! EmailAddress::Local.new("firstlast_", local_format: :relaxed).valid?, "last_"
-  USER_LOCALS = []
-  BAD_ESP_LOCALS = []
-  ESP_LOCALS = []
+  SIMPLE_LOCALS = [
+    "AZaz09_.-!#$%&'*+=?^`{|}",
+    "/^.+regexp*n$/@ruby-lang.org",
+  ]
+  RELAXED_LOCALS = [
+    "word.ww-ww!ww#ww$ww%ww&ww'ww*ww+ww=ww?",
+    "_me-",
+  ]
+  USER_LOCALS = [
+    "first.last",
+    "first_last",
+    "first-last",
+    "_user_",
+    "T",
+    "T'Pau",
+    "T'Pau.w",
+    "T'Pau.w-w+_",
+    "Pelé",
+  ]
+  BAD_ESP_LOCALS = [
+    "short@gmail.com",
+  ]
+  ESP_LOCALS = [
+    "first.last@gmail.com"
+  ]
 
+  def test_parse
+    e = LOCAL.new("Allen.Fair+Tag@gmail.com")
+    assert_equal e.name, "allen.fair+tag"
+    assert_equal e.mailbox, "allen.fair"
+    assert_equal e.tag, "tag"
+    assert e.valid?
+  end
+
+  def test_unicode
+    assert LOCAL.new( "こんにちは.世界", local_encoding: :unicode).valid?
+    assert !LOCAL.new( "こんにちは.世界", local_encoding: :ascii).valid?
+    assert !LOCAL.new("Pelé").valid?
+  end
 
   def test_valid_standard
     STANDARD_LOCALS.each do |local|
-      assert EmailAddress::Local.new(local, local_fix: false).standard?, local
+      assert EmailAddress::Local.new(local, local_fix: false).level_at_least?(:standard), local
     end
   end
 
   def test_invalid_standard
     INVALID_LOCALS.each do |local|
-      assert_equal false, EmailAddress::Local.new(local, local_fix: false).standard?, local
+      assert ! EmailAddress::Local.new(local, local_fix: false).valid?, local
+    end
+  end
+
+  def test_simple
+    SIMPLE_LOCALS.each do |local|
+      assert EmailAddress::Local.new(local).level == :simple, local
     end
   end
 
   def test_relaxed
-    INVALID_LOCALS.each do |local|
-      assert EmailAddress::Local.new("first..last", local_format: :relaxed).valid?, local
+    RELAXED_LOCALS.each do |local|
+      assert EmailAddress::Local.new(local).level == :relaxed, local
     end
   end
 
-  #def test_unicode
-  #  assert ! EmailAddress::Local.new("üñîçøðé1", local_encoding: :ascii).standard?, "not üñîçøðé1"
-  #  assert EmailAddress::Local.new("üñîçøðé2", local_encoding: :unicode).standard?, "üñîçøðé2"
-  #  assert EmailAddress::Local.new("test", local_encoding: :unicode).valid?, "unicode should include ascii"
-  #  assert ! EmailAddress::Local.new("üñîçøðé3").valid?, "üñîçøðé3 valid"
-  #end
+  def test_user
+    USER_LOCALS.each do |local|
+      #p [:user, local, LOCAL.new(local).level]
+      assert EmailAddress::Local.new(local).level == :user, local
+    end
+  end
 
+  def test_canonical
+    e = LOCAL.new("FIRST.LAST+TAG@RUBY-LANG.ORG")
+    assert_equal e.canonical, 'first.last'
+  end
 
   #def test_valid_conventional
   #  %w( first.last first First+Tag o'brien).each do |local|
