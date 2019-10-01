@@ -1,13 +1,11 @@
 # frozen_string_literal: true
 
-require 'simpleidn'
-
 module EmailAddress
   # *Email Address Correction Feature*
   #
   # These correction may not be accurate in all cases.
   # A "Did you mean" prompt would be useful in an interactive mode.
-  module AddressCorrection
+  class Corrector
     # This function takes an email address string and a correction level,
     #
     #   * 0 => Perform no correction
@@ -17,8 +15,9 @@ module EmailAddress
     #
     # Takes an email address from incoming data and attempts to sanatize and
     # perform corrections.
-    def correct_address(address, level = null)
-      level ||= @config[:correction_level] || 0
+    # EmailAddress::Correction.new.corect("address")
+    def correct(address, level = null)
+      # level ||= @config[:correction_level] || 0
       return address if level < 1
 
       address = correct_address_level_1(address)

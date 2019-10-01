@@ -23,14 +23,15 @@
 #     EmailAddress.new(email_address_string).redact!
 #
 module EmailAddress
-  require 'email_address/address_correction'
+  require 'email_address/address'
   require 'email_address/config'
+  require 'email_address/corrector'
+  require 'email_address/dns'
   require 'email_address/domain'
   require 'email_address/local'
   require 'email_address/provider'
+  require 'email_address/regex'
   require 'email_address/rewriter'
-  require 'email_address/address'
-  require 'email_address/dns'
   require 'email_address/version'
 
   require 'email_address/active_record_validator' if defined?(ActiveModel)

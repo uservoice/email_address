@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-lib = File.expand_path('lib', __FILE__)
+lib = File.expand_path('../lib', __FILE__)
 $LOAD_PATH.unshift(lib) unless $LOAD_PATH.include?(lib)
 require 'email_address/version'
 
@@ -29,7 +29,8 @@ Gem::Specification.new do |spec|
     spec.add_development_dependency "activerecord", "~> 6.0.0"
     spec.add_development_dependency "sqlite3"
   end
-  spec.add_development_dependency "codeclimate-test-reporter"
+  spec.add_development_dependency "simplecov"
+  # spec.add_development_dependency "codeclimate-test-reporter"
   spec.add_development_dependency "pry"
   spec.add_development_dependency "irb"
 

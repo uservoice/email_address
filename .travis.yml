@@ -1,19 +1,23 @@
 language: ruby
+env:
+  global:
+    - CC_TEST_REPORTER_ID=729b2d0e2cc94f63b7da91042da0b6d77bbe30c2024dba04881f46caf702636f
+
+language: ruby
 rvm:
   - ruby-head
   - 2.4.7
   - jruby-9.2.8.0
-  #- rbx
 
 before_script:
   - curl -L https://codeclimate.com/downloads/test-reporter/test-reporter-latest-linux-amd64 > ./cc-test-reporter
   - chmod +x ./cc-test-reporter
   - ./cc-test-reporter before-build
 script:
-  - bundle exec rake
+  - bundle exec rake test
 after_script:
   - ./cc-test-reporter after-build --exit-code $TRAVIS_TEST_RESULT
 
-addons:
-  code_climate:
-    repo_token: 729b2d0e2cc94f63b7da91042da0b6d77bbe30c2024dba04881f46caf702636f
+#addons:
+#  code_climate:
+#    repo_token: 729b2d0e2cc94f63b7da91042da0b6d77bbe30c2024dba04881f46caf702636f

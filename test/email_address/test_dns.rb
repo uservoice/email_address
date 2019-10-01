@@ -2,7 +2,7 @@
 require_relative '../test_helper'
 
 class TestDNS < Minitest::Test
-  GOOD_DOMAIN = "ruby-lang.org"
+  GOOD_DOMAIN = "rubygems.org"
   UNKNOWN_DOMAIN  = "be3u8erg7ywegknjh.com"
   DNS = EmailAddress::DNSCache.instance # Save typing
 
@@ -21,7 +21,7 @@ class TestDNS < Minitest::Test
 
   def test_mx_hosts
     dns = DNS.lookup(GOOD_DOMAIN)
-    assert dns.mx_hosts.first[:host] =~ /ruby-lang/, "Did not get correct MX"
+    assert dns.mx_hosts.first[:host] =~ /mailgun/, "Did not get correct MX"
   end
 
   def test_valid

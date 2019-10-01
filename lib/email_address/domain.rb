@@ -2,65 +2,19 @@
 
 require 'simpleidn'
 module EmailAddress
-  # Defines the "Domain" part of the email address
+  # Parses and validates the "Domain" part of the email address
+  # * Fully Qualified or Partial Domain Name
+  # * IPv6 and IPv6 Address
+  # * International Domain Name (IDN)
+  # * DNS/Punycode Name (IDN escaped to ASCII DNS Name)
   class Domain
-    DOMAIN_NAME_REGEX =
-      /^( [\p{L}\p{N}]+ (?: (?: \-{1,2} | \.) [\p{L}\p{N}]+ )* )(.*)/x.freeze
     FORMATS = %i[default localhost ipv4 ipv6 subdomain fqdn].freeze
-    # Sometimes, you just need a Regexp...
-    DNS_HOST_REGEX =
-      / [\p{L}\p{N}]+ (?: (?: \-{1,2} | \.) [\p{L}\p{N}]+ )*/x.freeze
-
-    # The IPv4 and IPv6 were lifted from Resolv::IPv?::Regex and tweaked to not
-    # \A...\z anchor at the edges.
-    IPV6_HOST_REGEX = /\[IPv6:
-      (?: (?:(?x-mi:
-      (?:[0-9A-Fa-f]{1,4}:){7}
-         [0-9A-Fa-f]{1,4}
-      )) |
-      (?:(?x-mi:
-      (?: (?:[0-9A-Fa-f]{1,4}(?::[0-9A-Fa-f]{1,4})*)?) ::
-      (?: (?:[0-9A-Fa-f]{1,4}(?::[0-9A-Fa-f]{1,4})*)?)
-      )) |
-      (?:(?x-mi:
-      (?: (?:[0-9A-Fa-f]{1,4}:){6,6})
-      (?: \d+)\.(?: \d+)\.(?: \d+)\.(?: \d+)
-      )) |
-      (?:(?x-mi:
-      (?: (?:[0-9A-Fa-f]{1,4}(?::[0-9A-Fa-f]{1,4})*)?) ::
-      (?: (?:[0-9A-Fa-f]{1,4}:)*)
-      (?: \d+)\.(?: \d+)\.(?: \d+)\.(?: \d+)
-         )))\]/ix.freeze
-
-    IPV4_HOST_REGEX = /\[((?x-mi:0
-               |1(?:[0-9][0-9]?)?
-               |2(?:[0-4][0-9]?|5[0-5]?|[6-9])?
-               |[3-9][0-9]?))\.((?x-mi:0
-               |1(?:[0-9][0-9]?)?
-               |2(?:[0-4][0-9]?|5[0-5]?|[6-9])?
-               |[3-9][0-9]?))\.((?x-mi:0
-               |1(?:[0-9][0-9]?)?
-               |2(?:[0-4][0-9]?|5[0-5]?|[6-9])?
-               |[3-9][0-9]?))\.((?x-mi:0
-               |1(?:[0-9][0-9]?)?
-               |2(?:[0-4][0-9]?|5[0-5]?|[6-9])?
-               |[3-9][0-9]?))\]/x.freeze
-
-    # Matches conventional host name and punycode: domain.tld, x--punycode.tld
-    CANONICAL_HOST_REGEX = /\A #{DNS_HOST_REGEX} \z/x.freeze
-
-    # Matches Host forms: DNS name, IPv4, or IPv6 formats
-    STANDARD_HOST_REGEX = /\A (?: #{DNS_HOST_REGEX} | #{IPV4_HOST_REGEX}
-                               | #{IPV6_HOST_REGEX}) \z/ix.freeze
-
-    attr_reader :name
-    attr_reader :original
+    attr_reader :name, :dns_name, :original
     attr_reader :errors
-    attr_accessor :format
-    attr_accessor :comment_left
-    attr_accessor :comment_right
-    attr_accessor :subdomain, :apex_name, :sld, :tld, :ip
-    attr_accessor :apex_domain, :fqdn, :punycode, :provider
+    attr_reader :format
+    attr_reader :comment_left, :comment_right
+    attr_reader :subdomain, :apex_name, :sld, :tld, :ip, :tlds
+    attr_reader :apex_domain, :fqdn, :punycode, :provider
 
     def initialize(name = nil, config = {})
       @errors = []
@@ -69,18 +23,14 @@ module EmailAddress
       self.name = name
     end
 
-    def dns(name = @name)
-      return nil if !@dns || !name
-
-      @dns.lookup(name)
-    end
-
     def name=(name)
       @errors = []
       @original = name
       @provider = @subdomain = @apex_name = @sld = @tld = @ip = nil
-      @apex_domain = @fqdn = @punycode = nil
+      @apex_domain = @fqdn = @dns_name = nil
+      name = name.gsub(/\s+/, '') if @config[:host_remove_spaces]
       parse(name) if name
+      find_provider
     end
 
     # The exploded domain data
@@ -88,10 +38,10 @@ module EmailAddress
       { name: @name, format: @format,
         comment_left: @comment_left, comment_right: @comment_right,
         apex_name: @apex_name, apex_domain: @apex_domain, # example.com
-        tld: @tld, sld: @sld, tlds: tlds,
+        tld: @tld, sld: @sld, tlds: @tlds,
         subdomain: @subdomain, fqdn: @fqdn, # "sub.domain.sld.tld."
         ip_address: @ip, # 127.0.0.1 or ::1
-        idn: idn?, punycode: @punycode, # for IDN
+        idn: idn?, dns_name: @dns_name, # for IDN
         errors: @errors }
     end
 
@@ -101,7 +51,7 @@ module EmailAddress
 
     # The normalized DNS domain name, punycode if IDN
     def to_s
-      @punycode || @name
+      @dns_name || @name
     end
 
     # The full address domain, with comments
@@ -109,14 +59,9 @@ module EmailAddress
       [@comment_left, @name, @comment_right].compact.join
     end
 
-    # A string of second and top level domain names
-    def tlds
-      [@sld, @tld].compact.join('.')
-    end
-
     # true if this is a IDN/International Domain Name
     def idn?
-      @punycode =~ /\A^xn--/ || @name =~ /\A^xn--/
+      @dns_name =~ /\A^xn--/ || @name =~ /\A^xn--/
     end
 
     def self.valid?(name, config = {})
@@ -137,50 +82,56 @@ module EmailAddress
     # * "192.168.1.1/32" => IPv4/IPv6 CIDR Address of IP
     # * "192.168.1.1/32" => IPv4/IPv6 CIDR Address of MX hosts
     def matches?(rules)
-      rules = Array(rules)
-      return false if rules.empty?
+      #  rules = Array(rules)
+      #  return false if rules.empty?
 
-      rules.each do |rule|
-        [@name, @provider, @punycode, @fqdn, @ip].each do |v|
-          if v && rule.is_a?(Regexp)
-            return true if v =~ rule
-          elsif v && rule == v
-            return true
-          end
-        end
-        next unless rule.is_a?(String)
-        return true if rule.end_with?('.') && @apex_name == rule[0..-2]
-        return true if rule.start_with?('.') && @name.end_with?(rule)
+      #  rules.each do |rule|
+      #    [@name, @provider, @dns_name, @fqdn, @ip].each do |v|
+      #      if v && rule.is_a?(Regexp)
+      #        return true if v =~ rule
+      #      elsif v && rule == v
+      #        return true
+      #      end
+      #    end
+      #    next unless rule.is_a?(String)
+      #    return true if rule.end_with?('.') && @apex_name == rule[0..-2]
+      #    return true if rule.start_with?('.') && @name.end_with?(rule)
 
-        [@name, @punycode, @fqdn, @ip].each do |v|
-          return true if v && File.fnmatch?(rule, v)
-        end
-        return true if ip_matches?(ip, rule)
-      end
-      false
+      #    [@name, @dns_name, @fqdn, @ip].each do |v|
+      #      return true if v && File.fnmatch?(rule, v)
+      #    end
+      #    return true if ip_matches?(ip, rule)
+      #  end
+      #  false
+    end
+
+    private ####################################################################
+
+    # Performs a DNS lookup of the given domain name
+    def dns(name = @name)
+      return nil if !@dns || !name
+
+      @dns.lookup(name)
     end
 
     def parse(name)
       name = parse_comment(name)
-      if (m = name.match(/\A\[IPv6:(.+)\]/i))
+      if (m = name.match(Regex::IPV6_HOST_REGEX))
         self.ipv6 = m[1]
-      elsif (m = name.match(/\A\[(\d{1,3}(\.\d{1,3}){3})\]/)) # IPv4
+      elsif (m = name.match(Regex::IPV4_HOST_REGEX))
         self.ipv4 = m[1]
+      elsif name == 'localhost'
+        handle_localhost(name)
       else
-        name = name.gsub(/\s+/, '') if @config[:host_remove_spaces]
-        name = fully_qualified_domain_name(name.downcase)
-        parse_dns_name(name)
-        check_dns if dns
+        handle_domain_name(name)
       end
-      find_provider
     end
-
-    private
 
     def ipv6=(ip)
       @ip = ip.downcase.gsub(/\b0+/, '') # Remove leading zeroes
       @name = "[IPv6:#{@ip}]"
       @format = :ipv6
+      # Validip?
       add_error(:no_ip_domain) unless @config[:host_allow_ip]
     end
 
@@ -188,102 +139,87 @@ module EmailAddress
       @ip = ip.gsub(/\b0+([1-9])/, '\1') # Remove leading zeroes
       @name = "[#{@ip}]"
       @format = :ipv4
+      # Validip?
       add_error(:no_ip_domain) unless @config[:host_allow_ip]
     end
 
-    def parse_domain_ip(str)
-      if str.start_with?('[') # (Comment)
-        m = str.match(IPV4_HOST_REGEX)
-        if m
-          @domain_type = :ipv4
-        else
-          m = str.match(IPV6_HOST_REGEX)
-          @domain_type = :ipv6 if m
-        end
-        if m
-          if @domain_name == ''
-            @domain_name += m[1]
-          else
-            add_error(:invalid_address, 'Unexpected IP Address')
-          end
-          str = m[2]
-        else
-          add_error(:invalid_address, 'Unexpected Left Bracket')
-          str = str[1, str.size - 1]
-        end
-      end
-      str
-    end
-
-    # def parse_domain_name(str)
-    #   m = str.match(DOMAIN_NAME_REGEX)
-    #   if m && @domain_name == ''
-    #     @domain_name += m[1]
-    #     if @domain_name.length > 253
-    #       add_error(:invalid_address, 'Domain Name Too Long')
-    #     else
-    #       @domain_name.split('.').each do |label|
-    #         if label.length > 63
-    #           add_error(:invalid_address, 'Domain Level Name Too Long')
-    #         end
-    #       end
-    #     end
-    #   elsif m
-    #     add_error(:invalid_address, 'Unexpected IP Address')
-    #     str = m[2]
-    #   else
-    #     add_error(:invalid_address, 'Unexpected Character')
-    #     str = str[1, str.size - 1]
-    #   end
-    #   str
-    # end
-
-    def parse_dns_name(name)
-      if name =~ /[^[:ascii:]]/ # IDN
-        set_idn(name)
-      elsif name =~ /\A^xn--/ # Punycode
-        set_punycode(name)
-      elsif name == 'localhost'
-        set_localhost
-      else
-        set_domain
-      end
-
+    def handle_localhost(name)
       @name = name
-      if name =~ /[^[:ascii:]]/
-        set_idn(name)
-        add_error(:no_idn) unless @config[:allow_idn]
-        @punycode = ::SimpleIDN.to_ascii(name)
-      elsif name =~ /\A^xn--/
-        @punycode = name
-        @name = ::SimpleIDN.to_unicode(name)
-      else
-        @punycode = name
-      end
+    end
 
-      if name == 'localhost'
-        @format = :localhost
-        add_error(:no_localhost) unless @config[:allow_localhost]
-      elsif name.index('.').nil?
-        add_error(:incomplete_domain)
-        # or assume xxx.com?
-      elsif parse_fqdn(name)
+    def handle_domain_name(name)
+      if name =~ /[^[:ascii:]]/ # IDN
+        self.idn = name
+      elsif name =~ /\A^xn--/ # Punycode
+        self.dns_name = name
       else
-        add_error(:mailformed_domain)
+        name = name.gsub(/\s+/, '') if @config[:host_remove_spaces]
+        self.fqdn = name
+        check_dns
       end
     end
 
-    # Split sub.domain from .tld: *.com, *.xx.cc, *.cc
-    def parse_fqdn(name)
+    def idn=(name)
+      @idn = @name = name
+      self.fqdn = name
+      @dns_name = SimpleIDN.to_ascii(name)
+    end
+
+    def dns_name=(name)
+      @dns_name = name.downcase
+      self.fqdn = @dns_name
+      @name = SimpleIDN.to_unicode(@dns_name)
+    end
+
+    # Attempts to complete a FQDN
+    # A Fully-Qualified Domain Name (subdomain.apex_name.tld) is defined as a
+    # FQDN when DNS lookup of "subdomain.apex_name.tld." (note the tailing dot)
+    # resolves. Otherwise, it could be a subdomain on one of the "search
+    # domains" defined in your resolver configuration (/etc/resolv.conf).
+    # If the given name is not FQDN, it will try each search domain until the
+    # name resolves, returning the FQDN on success or the name.
+    def fqdn=(name)
+      @fqdn = @name = name.downcase
+      if @dns && @config[:allow_partial_fqdn] && !fqdn?(name)
+        @fqdn = find_fqdn(name)
+      end
+      add_error(:domain_not_found) unless fqdn?(name)
+      parse_domain_name(@name)
+    end
+
+    # Looks up "name." in DNS. If found, it is a FQDN.
+    def fqdn?(name)
+      return true unless @dns
+
+      @fqdn = name + '.' if dns(name + '.').valid?(:host)
+      @fqdn ? true : false
+    end
+
+    def find_fqdn(name)
+      DNSCache.instance.dns_config[:search].each do |base|
+        full = name + '.' + base
+        return full if fqdn?(full)
+      end
+      name
+    end
+
+    ############################################################################
+    # Parse/Split Domain Name
+    ############################################################################
+
+    # Parses/Splits the domain name into component parts:
+    #     subdomains.apex_name.sld.tld
+    def parse_domain_name(name)
       sub_apex = parse_tld(name)
       return false if sub_apex == name # parse failed
 
-      if (m = sub_apex.match(/\A(.+)\.(.+)\z/)) # subdomainx.apex
+      if (m = sub_apex.match(/\A(.+)\.(.+)\z/)) # subdomains.apex_name
         @subdomain = m[1]
         @apex_name = m[2]
       else
         @apex_name = sub_apex
       end
+      # p [:parse_domain_name, name, @subdomain, @apex_name, @sld, @tld, @tlds]
       @apex_domain = [@apex_name, @sld, @tld].compact.join('.')
     end
 
@@ -296,48 +232,24 @@ module EmailAddress
         @sld = m[2] if m[3]
         @tld = m[3] || m[2]
       end
-      name
-    end
-
-    # Attempts to complete a FQDN
-    def fully_qualified_domain_name(name)
-      return name if name == 'localhost' || !@dns
-      return name unless partial_fqdn(name)
-
-      name = find_fqdn(name)
-      return name if @fqdn
-
-      add_error(:domain_not_found)
-      name
-    end
-
-    # Looks up "name." in DNS, so is a FQDN, returns boolean
-    def partial_fqdn(name)
-      return false unless @config[:allow_partial_fqdn]
-
-      @fqdn = name + '.' if dns(name + '.').valid?(:host)
-      @fqdn ? true : false
-    end
-
-    def find_fqdn(name)
-      DNSCache.instance.dns_config[:search].each do |base|
-        if dns(name + '.' + base + '.').valid?(:host)
-          @fqdn = name + '.' + base + '.'
-          return name + '.' + base
-        end
-      end
+      @tlds = [@sld, @tld].compact.join('.')
       name
     end
 
     def parse_comment(name)
-      if (m = name.match(/\A\((.+?)\)(.+)/)) # (comment)domain.tld
-        @comment_left = m[1]
-        name = m[2]
+      if (m = name.match(Regex::COMMENT_PARTS))
+        @comment_left  = m[1]
+        name           = m[2]
+        @comment_right = m[3]
       end
-      if (m = name.match(/\A(.+)\((.+?)\)\z/)) # domain.tld(comment)
-        @comment_right = m[2]
-        name = m[1]
-      end
+      # if (m = name.match(/\A\((.+?)\)(.+)/)) # (comment)domain.tld
+      #   @comment_left = m[1]
+      #   name = m[2]
+      # end
+      # if (m = name.match(/\A(.+)\((.+?)\)\z/)) # domain.tld(comment)
+      #   @comment_right = m[2]
+      #   name = m[1]
+      # end
       name
     end
 

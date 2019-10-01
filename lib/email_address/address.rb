@@ -5,7 +5,6 @@ module EmailAddress
   # Acts as a base class for other email address types
   # Use as Email Address standard syntax checker and parser.
   class Address
-    include AddressCorrection
     attr_reader :address # string "local@domain"
     attr_reader :original
     attr_reader :errors
@@ -162,6 +161,5 @@ module EmailAddress
         str
       end
     end
-
   end
 end
