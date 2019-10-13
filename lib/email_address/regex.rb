@@ -13,7 +13,7 @@ module EmailAddress
     # \A...\z anchor at the edges.
     # [IPv6:2001:470:8:120e:1035:ea47:5d6d:b4c6]
     IPV6_FORMAT = /^\[IPv6:(.+)\]$/.freeze
-    IPV6_HOST_REGEX = /\[IPv6:
+    IPV6_HOST_REGEX = /\[IPv6:(
       (?: (?:(?x-mi:
       (?:[0-9A-Fa-f]{1,4}:){7}
          [0-9A-Fa-f]{1,4}
@@ -30,7 +30,7 @@ module EmailAddress
       (?: (?:[0-9A-Fa-f]{1,4}(?::[0-9A-Fa-f]{1,4})*)?) ::
       (?: (?:[0-9A-Fa-f]{1,4}:)*)
       (?: \d+)\.(?: \d+)\.(?: \d+)\.(?: \d+)
-         )))\]/ix.freeze
+         ))))\]/ix.freeze
 
     # [127.0.0.1]
     IPV4_FORMAT = /^\[(.+)\]$/.freeze
@@ -99,6 +99,6 @@ module EmailAddress
       /^(\(.*?\))(.*)/i.freeze
 
     # (1=comment) 2=data (3=comment)
-    COMMENT_PARTS = /^ (?: \( (.*?) \) )? (.*) (?: \( (.*?) \) )? $/ix.freeze
+    COMMENT_PARTS = /^ (?: \( (.*?) \) )? (.*?) (?: \( (.*) \) )? $/ix.freeze
   end
 end

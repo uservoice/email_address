@@ -1,18 +1,31 @@
 # frozen_string_literal: true
 
+require 'yaml'
+
+# Email Address Gem
 module EmailAddress
-  # Global configurations and for default/unknown providers. Settings are:
+  # Email Address Configuration Manager.
+  #
+  # Usage:
+  #   # Override defaults in your application:
+  #   EmailAddress::Config.defaults[:local_fix] = true
+  #
+  #   # Create a local email provider with special rules:
+  #   EmailAddress::Config.providers[:x] = {override_name: value, ...}
+  #
+  #   config = EmailAddress::Config.new(override_name: value, ...)
+  #   config[:setting]
   #
   # * dns_lookup:         :mx, :a, :off
   #   Enables DNS lookup for validation by
   #   :mx       - DNS MX Record lookup
-  #   :a        - DNS A Record lookup (as some domains don't specify an MX incorrectly)
+  #   :a        - DNS A Record lookup (allow badly configured MX domains)
   #   :off      - Do not perform DNS lookup (Test mode, network unavailable)
   #
   # * sha1_secret         ""
   #   This application-level secret is appended to the email_address to compute
-  #   the SHA1 Digest, making it unique to your application so it can't easily be
-  #   discovered by comparing against a known list of email/sha1 pairs.
+  #   the SHA1 Digest, making it unique to your application so it can't easily
+  #   be discovered by comparing against a known list of email/sha1 pairs.
   #
   # For local part configuration:
   # * local_downcase:     true
@@ -20,15 +33,15 @@ module EmailAddress
   #   RFC says local part is case insensitive, that's a bad part.
   #
   # * local_fix:          true,
-  #   Make simple fixes when available, remove spaces, condense multiple punctuations
+  #   Make simple fixes when available, remove spaces, punctuations
   #
   # * local_encoding:     :ascii, :unicode,
   #   Enable Unicode in local part. Most mail systems do not yet support this.
   #   You probably want to stay with ASCII for now.
   #
   # * local_parse:        nil, ->(local) { [mailbox, tag, comment] }
-  #   Specify an optional lambda/Proc to parse the local part. It should return an
-  #   array (tuple) of mailbox, tag, and comment.
+  #   Specify an optional lambda/Proc to parse the local part. It should return
+  #   an array (tuple) of mailbox, tag, and comment.
   #
   # * local_format:       :conventional, :relaxed, :redacted, :standard, Proc
   #   :conventional       word ( puncuation{1} word )*
@@ -85,7 +98,7 @@ module EmailAddress
   # * address_fqdn_domain: nil || "domain.tld"
   #   Configure to complete the FQDN (Fully Qualified Domain Name)
   #   When host is blank, this value is used
-  #   When host is computer name only, a dot and this is appended to get the FQDN
+  #   When host is computer name only, this is appended to get the FQDN
   #   You probably don't want this unless you have host-local email accounts
   #
   # For provider rules to match to domain names and Exchanger hosts
@@ -93,141 +106,130 @@ module EmailAddress
   # * host_match:         %w(.org example.com hotmail. user*@ sub.*.com)
   # * exchanger_match:    %w(google.com 127.0.0.1 10.9.8.0/24 ::1/64)
   #
-
-  require 'yaml'
-
   class Config
-    @new_config = {
-      local_x: nil,
-      domain_x: nil,
-      dns_x: nil
-    }
+    class << self
+      attr_accessor :defaults, :providers, :error_messages
+    end
 
-    @@config = {
-      dns_lookup:         :mx,  # :mx, :a, :off
-      sha1_secret:        "",
-      munge_string:       "*****",
+    ############################################################################
+    # Data
+    ############################################################################
 
-      local_downcase:     true,
-      local_fix:          false,
-      local_encoding:     :ascii, # :ascii, :unicode,
-      local_parse:        nil,   # nil, Proc
-      local_format:       :conventional, # :conventional, :relaxed, :redacted, :standard, Proc
-      local_size:         1..64,
-      tag_separator:      '+', # nil, character
-      mailbox_size:       1..64, # without tag
-      mailbox_canonical:  nil, # nil,  Proc
-      mailbox_validator:  nil, # nil,  Proc
+    @defaults = {
+      dns_lookup: :mx, # :mx, :a, :off
+      dns_cache: :no, # :file, Proc
+      sha1_secret: '',
+      munge_string: '*****',
 
-      host_encoding:      :punycode || :unicode,
-      host_validation:    :mx || :a || :connect || :syntax,
-      host_size:          1..253,
-      host_allow_ip:      false,
+      local_downcase: true,
+      local_fix: false,
+      local_encoding: :ascii, # :ascii, :unicode,
+      local_parse: nil, # nil, Proc
+      local_format: :conventional, # or: :relaxed, :redacted, :standard, Proc
+      local_size: 1..64,
+      tag_separator: '+', # nil, character
+      mailbox_size: 1..64, # without tag
+      mailbox_canonical: nil, # nil,  Proc
+      mailbox_validator: nil, # nil,  Proc
+
+      host_encoding: :punycode || :unicode,
+      host_validation: :mx, # :a || :connect || :syntax,
+      host_size: 1..253,
+      host_allow_ip: false,
       host_remove_spaces: false,
-      host_local:         false,
+      host_local: false,
 
       address_validation: :parts, # :parts, :smtp, Proc
-      address_size:       3..254,
-      address_fqdn_domain: nil, # Fully Qualified Domain Name = [host].[domain.tld]
+      address_size: 3..254,
+      address_fqdn_domain: nil # Fully Qualified Domain Name
     }
 
-    # 2018-04: AOL and Yahoo now under "oath.com", owned by Verizon. Keeping separate for now
-    @@providers = {
+    # Providers is a set of overrides to the default @config based on
+    # well-known email service providers,
+    # 2018-04: AOL and Yahoo now under "oath.com", owned by Verizon.
+    @providers = {
       aol: {
-        host_match:       %w(aol. compuserve. netscape. aim. cs.),
+        host_match: %w[aol. compuserve. netscape. aim. cs.]
       },
       google: {
-        host_match:       %w(gmail.com googlemail.com),
-        exchanger_match:  %w(google.com googlemail.com),
-        local_size:       5..64,
-        local_private_size: 1..64, # When hostname not in host_match (private label)
-        mailbox_canonical: ->(m) {m.gsub('.','')},
+        host_match: %w[gmail.com googlemail.com],
+        exchanger_match: %w[google.com googlemail.com],
+        local_size: 5..64,
+        local_private_size: 1..64, # hostname not in host_match (private label)
+        mailbox_canonical: ->(m) { m.gsub('.', '') }
       },
       msn: {
-        host_match:       %w(msn. hotmail. outlook. live.),
-        mailbox_validator: ->(m,t) { m =~ /\A[a-z][\-\w]*(?:\.[\-\w]+)*\z/i},
+        host_match: %w[msn. hotmail. outlook. live.],
+        mailbox_validator: ->(m, _) { m =~ /\A[a-z][\-\w]*(?:\.[\-\w]+)*\z/i }
       },
       yahoo: {
-        host_match:       %w(yahoo. ymail. rocketmail.),
-        exchanger_match:  %w(yahoodns yahoo-inc),
-      },
+        host_match: %w[yahoo. ymail. rocketmail.],
+        exchanger_match: %w[yahoodns yahoo-inc]
+      }
     }
 
-
-    # Loads messages: {"en"=>{"email_address"=>{"invalid_address"=>"Invalid Email Address",...}}}
+    # Loads messages: {"en"=>{"email_address"=>{"invalid_address"=>"...",}}}
     # Rails/I18n gem: t(email_address.error, scope: "email_address")
-    @errors = YAML.load_file(File.dirname(__FILE__)+"/messages.yaml")
+    @error_messages = YAML.load_file(File.dirname(__FILE__) + '/messages.yaml')
 
-    # If config is already one of us, return, else give a new
-    def self.get(config={})
-      if config.is_a?(EmailAddress::Config)
-        config
-      else
-        new(config)
+    ############################################################################
+    # Class Methods [Configuration]
+    ############################################################################
+
+    # Call with a configuration hash of overrides to create a provider.
+    def self.provider(name, config = {})
+      name = name.to_sym
+      unless config.empty?
+        @providers[name] ||= @defaults.clone
+        @providers[name].merge!(config)
       end
+      @providers[name]
     end
 
-    def initialize(config={})
-      @config = @@config.merge(config)
-      @config[:providers] = @@providers
+    # Set multiple default configuration settings
+    def self.configure(config = {})
+      @defaults.merge!(config)
     end
 
-    def set(hash)
-      @config = @config.merge(config)
+    def self.setting(name, *value)
+      @defaults[name.to_sym] = value.first unless value.empty?
+      @defaults[name.to_sym]
     end
 
+    ############################################################################
+    # Instance Methods
+    ############################################################################
+
+    # Creates a new configuration instance, with optional per-call overrides.
+    def initialize(config = {})
+      @config = self.class.defaults.merge(config)
+      @config[:providers] = self.class.providers
+    end
+
+    def providers(name)
+      self.class.providers
+    end
+
+    # Merges provider settings into current settings.
+    # Note: may override settings passed via new()
+    def provider(name)
+      config = self.class.providers[name.to_sym]
+      @config.merge!(config) if config
+    end
+
+    # Returns a configuration setting
     def [](setting)
       @config[setting.to_sym]
     end
 
-    def provider(name, setting=nil)
-      setting.nil ? @config[:providers][name] : @config[:providers][name][setting.to_sym]
-    end
-
-    def settings
-      @config
-    end
-
-    # Set multiple default configuration settings
-    def self.configure(config={})
-      @@config.merge!(config)
-    end
-
-    def self.setting(name, *value)
-      name = name.to_sym
-      @@config[name] = value.first if value.size > 0
-      @@config[name]
+    # Sets a configuration setting in this instance/context
+    def set(config_hash)
+      @config = @config.merge(config_hash)
     end
 
     # Returns the hash of Provider rules
-    def self.providers
-      @@providers
-    end
-
-    # Configure or lookup a provider by name.
-    def self.provider(name, config={})
-      name = name.to_sym
-      if config.size > 0
-        @@providers[name] ||= @config.clone
-        @@providers[name].merge!(config)
-      end
-      @@providers[name]
-    end
-
-    def self.error_message(name, locale="en")
-      @errors[locale]["email_address"][name.to_s] || name.to_s
-    end
-
-    # Customize your own error message text.
-    def self.error_messages(hash=nil)
-      @errors = @errors.merge(hash) if hash
-      @errors
-    end
-
-    def self.all_settings(*configs)
-      config = @@config.clone
-      configs.each {|c| config.merge!(c) if c }
-      config
+    def providers
+      self.class.providers
     end
   end
 end

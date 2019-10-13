@@ -98,9 +98,8 @@ module EmailAddress
     attr_reader :separator
     attr_reader :errors
 
-    def initialize(name=nil, config={})
-      @config = config
-      @config = EmailAddress::Config.new(config)
+    def initialize(name = nil, config = {})
+      @config = config.is_a?(Config) ? config : Config.new(config)
       parse(name) if name
     end
 
@@ -111,7 +110,7 @@ module EmailAddress
     # Parses string into local part, up to "@" domain part, returns remaining part.
     def parse(string)
       @errors = []
-      @name= ''
+      @name = @comment_left = @comment_right = @tag = ''
       remaining = parse_local(string)
       @name.downcase! if @config[:local_downcase]
       parse_address_tag

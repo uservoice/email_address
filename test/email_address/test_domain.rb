@@ -49,7 +49,7 @@ class TestDomain < MiniTest::Test
   end
 
   def test_provider
-    a = DOMAIN.new('my.yahoo.co.jp')
+    a = DOMAIN.new('yahoo.co.jp')
     assert_equal :yahoo, a.provider
     a = DOMAIN.new('rubygems.org')
     assert_equal :default, a.provider

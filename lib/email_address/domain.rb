@@ -18,9 +18,9 @@ module EmailAddress
 
     def initialize(name = nil, config = {})
       @errors = []
-      @config = config
-      @dns = config[:dns_lookup] == :off ? nil : DNSCache.instance
-      self.name = name
+      @config = config.is_a?(Config) ? config : Config.new(config)
+      @dns = @config[:dns_lookup] == :off ? nil : DNSCache.instance
+      self.name = name if name
     end
 
     def name=(name)
@@ -82,30 +82,28 @@ module EmailAddress
     # * "192.168.1.1/32" => IPv4/IPv6 CIDR Address of IP
     # * "192.168.1.1/32" => IPv4/IPv6 CIDR Address of MX hosts
     def matches?(rules)
-      #  rules = Array(rules)
-      #  return false if rules.empty?
+      rules = Array(rules)
+      return false if rules.empty?
 
-      #  rules.each do |rule|
-      #    [@name, @provider, @dns_name, @fqdn, @ip].each do |v|
-      #      if v && rule.is_a?(Regexp)
-      #        return true if v =~ rule
-      #      elsif v && rule == v
-      #        return true
-      #      end
-      #    end
-      #    next unless rule.is_a?(String)
-      #    return true if rule.end_with?('.') && @apex_name == rule[0..-2]
-      #    return true if rule.start_with?('.') && @name.end_with?(rule)
-
-      #    [@name, @dns_name, @fqdn, @ip].each do |v|
-      #      return true if v && File.fnmatch?(rule, v)
-      #    end
-      #    return true if ip_matches?(ip, rule)
-      #  end
-      #  false
+      rules.each do |rule|
+        return true if test_match_rule(rule)
+        next unless rule.is_a?(String)
+        return true if rule.end_with?('.') && @apex_name == rule[0..-2]
+        return true if rule.start_with?('.') && @name.end_with?(rule)
+        return true if test_match_rule(rule, true)
+        return true if ip_matches?(ip, rule)
+      end
+      false
     end
 
-    private ####################################################################
+    def test_match_rule(rule, glob = false)
+      [@name, @provider, @dns_name, @fqdn, @ip].each do |v|
+        next unless v
+        return true if rule.is_a?(Regexp) && v =~ rule
+        return true if glob ? File.fnmatch?(rule, v.to_s) : v == rule
+      end
+      false
+    end
 
     # Performs a DNS lookup of the given domain name
     def dns(name = @name)
@@ -113,6 +111,8 @@ module EmailAddress
 
       @dns.lookup(name)
     end
+
+    private ####################################################################
 
     def parse(name)
       name = parse_comment(name)
@@ -144,10 +144,12 @@ module EmailAddress
     end
 
     def handle_localhost(name)
+      @format = :localhost
       @name = name
     end
 
     def handle_domain_name(name)
+      @format = :fqdn
       if name =~ /[^[:ascii:]]/ # IDN
         self.idn = name
       elsif name =~ /\A^xn--/ # Punycode
@@ -226,8 +228,8 @@ module EmailAddress
     # Parses TLD's off domain name. Returns name, unchanged if failed
     def parse_tld(name)
       if (m = name.match(/\A(.+)\.(\w{3,10})\z/)) || # (1=apex).(2=tld)
-         (m = name.match(/\A(.+)\.(\w{1,3})\.(\w\w)\z/)) || # (apex).(sld).(tld)
-         (m = name.match(/\A(.+)\.(\w\w)\z/)) # (1=apex).(2=tld/2char)
+          (m = name.match(/\A(.+)\.(\w{1,3})\.(\w\w)\z/)) || # (apex).(sld).(tld)
+          (m = name.match(/\A(.+)\.(\w\w)\z/)) # (1=apex).(2=tld/2char)
         name = m[1]
         @sld = m[2] if m[3]
         @tld = m[3] || m[2]
@@ -263,43 +265,43 @@ module EmailAddress
       add_error(:host_unknown, 'Unknown Domain or missing MX', @name)
     end
 
+    # Identifies the Email Service Provider (ESP) by  host or MX names
     def find_provider
-      # p '------------------------------> ' + @name
-      # p dns.mx_hosts
-      EmailAddress::Config.providers.each do |provider, config|
-        if config[:host_match] && matches?(config[:host_match])
-          return set_provider(provider, config)
-        end
-        # p [:unf, provider, config]
-      end
-      return set_provider(:default) unless dns
+      return if find_provider_by_host
+      return configure_provider(:default) unless dns
+      return if find_provider_by_mxers
 
-      EmailAddress::Config.providers.each do |provider, config|
+      configure_provider(:default)
+    end
+
+    def find_provider_by_host
+      @config.providers.each do |provider, config|
+        p [:unf, provider, config] if config.nil?
+        if config[:host_match] && matches?(config[:host_match])
+          return configure_provider(provider)
+        end
+      end
+      nil
+    end
+
+    def find_provider_by_mxers
+      # p @name, dns.mx_hosts
+      @config.providers.each do |provider, config|
         dns.mx_hosts.each do |mx| # {:host,:ipv4,:ipv6,:preference}
           next if mx[:host] == @name # Same host
 
           host = Domain.new(mx[:host])
           if host.matches?(config[:host_match])
-            # p [:mxm, rule, mx]
-            return set_provider(provider, config)
+            return configure_provider(provider)
           end
         end
       end
-
-      # provider = self.exchangers.provider
-      # if provider && provider != :default
-      #   p [253, provider]
-      #   self.set_provider(provider,
-      #     EmailAddress::Config.provider(provider))
-      # end
-
-      @provider || set_provider(:default)
+      nil
     end
 
-    def set_provider(name, provider_config = nil) # :nodoc:
-      provider_config ||= EmailAddress::Config.providers[name]
-      # p [:set_provider, @name, name, provider_config]
-      @config = EmailAddress::Config.all_settings(provider_config, @config)
+    # Updates configuration instance with the given provider settings
+    def configure_provider(name) # :nodoc:
+      @config.provider(name)
       @provider = name
     end
 

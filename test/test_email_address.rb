@@ -1,4 +1,5 @@
-# encoding: UTF-8
+# frozen_string_literal: true
+
 require_relative 'test_helper'
 
 class TestEmailAddress < MiniTest::Test
@@ -6,7 +7,7 @@ class TestEmailAddress < MiniTest::Test
   def test_new
     a = EmailAddress.new('user@example.com')
     assert_equal 'user', a.local.to_s
-    assert_equal 'example.com', a.host.to_s
+    assert_equal 'example.com', a.domain.to_s
   end
 
   def test_canonical

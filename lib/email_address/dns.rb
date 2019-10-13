@@ -181,7 +181,7 @@ module EmailAddress
     end
 
     def mx_records
-      if @_mx
+      if defined? @_mx
         @_mx
       elsif @config[:dns_lookup] == :off
         DEFAULT_MX
@@ -238,47 +238,47 @@ module EmailAddress
 
     # Maps simple names into Resolv Library types
     DNS_RECORD_TYPES = {
-      a:     Resolv::DNS::Resource::IN::A,
-      aaaa:  Resolv::DNS::Resource::IN::AAAA,
-      any:   Resolv::DNS::Resource::IN::ANY,
+      a: Resolv::DNS::Resource::IN::A,
+      aaaa: Resolv::DNS::Resource::IN::AAAA,
+      any: Resolv::DNS::Resource::IN::ANY,
       cname: Resolv::DNS::Resource::IN::CNAME,
       hinfo: Resolv::DNS::Resource::IN::HINFO,
       minfo: Resolv::DNS::Resource::IN::MINFO,
-      mx:    Resolv::DNS::Resource::IN::MX,
-      ns:    Resolv::DNS::Resource::IN::NS,
-      ptr:   Resolv::DNS::Resource::IN::PTR,
-      soa:   Resolv::DNS::Resource::IN::SOA,
-      txt:   Resolv::DNS::Resource::IN::TXT,
-      wks:   Resolv::DNS::Resource::IN::WKS,
-    }
+      mx: Resolv::DNS::Resource::IN::MX,
+      ns: Resolv::DNS::Resource::IN::NS,
+      ptr: Resolv::DNS::Resource::IN::PTR,
+      soa: Resolv::DNS::Resource::IN::SOA,
+      txt: Resolv::DNS::Resource::IN::TXT,
+      wks: Resolv::DNS::Resource::IN::WKS
+    }.freeze
 
-    def dns_record_hashes(record_name=:a, subdomain=nil)
+    def dns_record_hashes(record_name = :a, subdomain = nil)
       dns_records(record_name, subdomain).map do |rec|
         hash = {}
         rec.instance_variables.each do |n|
           v = rec.instance_variable_get(n)
-          hash[n.to_s[1..]] = v.class.name == 'Integer' ? v : v.to_s
-          hash
+          hash[n.to_s[1, n.size - 1]] = v.class.name == 'Integer' ? v : v.to_s
         end
       end
     end
 
     # Returns: [Resolv::DNS::Resource,...]
-    # If a block is passed, it gets each record, and the results of block are returned
+    # With block, it gets each record, and the results of block are returned
     # ips = dns_records(:a).map { |record| a.address.to_s } #=> [ip, ...]
     # ips = dns_records(:txt).map(&:data)
-    def dns_records(record_name=:a, subdomain=nil, &block)
+    def dns_records(record_name = :a, subdomain = nil, &block)
       return [] if @config[:dns_lookup] == :off
-      host = subdomain ? [subdomain, self.dns_name].join(".") : self.dns_name
+
+      host = subdomain ? [subdomain, dns_name].join('.') : dns_name
       cache(host, record_name, block) do
-        start = Time.now
+        # start = Time.now
         recs = Resolv::DNS.open do |dns|
           dns.getresources(host, DNS_RECORD_TYPES[record_name.to_sym])
         end
-        dur = Time.now - start
-        if dur > 1.0
-          puts "DNS Lookup of #{host} type #{record_name} took #{dur} seconds. :-("
-        end
+        # if (Time.now - start) > 1.0
+        #   puts "DNS Lookup of #{host} type #{record_name}" \
+        #        + " took #{dur} seconds. :-("
+        # end
         recs
       end
     end
@@ -286,8 +286,9 @@ module EmailAddress
     # Caches a DNS Lookup in a file store (useful for off-line/testing) or a
     # user-provided cache (that saves in memcache/redis/etc.).
     def cache(*keys, &block)
-      key = keys.join(":")
+      key = keys.join(':')
       @semaphore.synchronize do
+        p [:cache, @config[:dns_cache]]
         if @config[:dns_cache] == :file
           file_cache(key, &block)
         elsif @config[:dns_cache_custom]
@@ -301,14 +302,16 @@ module EmailAddress
     # VCR-like File System Caching for testing/performance
     # data = file_cache(domain, 'MX') { request(...) }
     def file_cache(*names, &block)
-      dir = @config[:dns_cache_dir] || "/tmp"
-      fn = File.join(dir, "email_address:dns:"+names.join(":"))
-      if File.exist?(fn)
+      dir = @config[:dns_cache_dir] || '/tmp'
+      fn = File.join(dir, 'email_address:dns:' + names.join(':'))
+      if File.exist?(fn) &&
+         ((Time.now - File.stat(fn).mtime).to_i / 86_400) < 30 # < 30.days old
         data = Marshal.load(File.read(fn))
+        # p [:file_cache, :w, fn]
       else
         data = block.call
-        #p [:file_cache, data]
         File.write(fn, Marshal.dump(data))
+        # p [:file_cache, :r, fn, data]
       end
       data
     end

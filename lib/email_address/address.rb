@@ -12,7 +12,7 @@ module EmailAddress
     attr_reader :domain
 
     def initialize(address, config = {})
-      @config = EmailAddress::Config.new(config)
+      @config = config.is_a?(Config) ? config : Config.new(config)
       @errors = []
       @local = EmailAddress::Local.new(nil, config)
       @domain = EmailAddress::Domain.new(nil, config)
@@ -72,6 +72,12 @@ module EmailAddress
         (.*)/ix.freeze
     COMMENT_TEXT        = /^(\(.*?\))(.*)/i.freeze
 
+    # Forms ####################################################################
+
+    def normal
+      to_s
+    end
+
     private
 
     # Parses the incoming email address string into these components:
@@ -84,10 +90,10 @@ module EmailAddress
     def parse(address)
       @local_name = @local_comment_left = @local_comment_right = ''
       configure_atom_defs
-      @address = correct_address(address)
+      @address = Corrector.new.correct(address, @config[:correction_level] || 0)
       domain_string = @local.parse(address)
-      @domain.parse(domain_string)
-      [@local_name, @domain_name]
+      @domain.name = domain_string
+      [@local.name, @domain.name]
     end
 
     def configure_atom_defs
