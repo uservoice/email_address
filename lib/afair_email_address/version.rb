@@ -1,3 +1,3 @@
-module EmailAddress
+module AfairEmailAddress
   VERSION = "0.1.12"
 end

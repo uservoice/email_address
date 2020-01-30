@@ -1,8 +1,8 @@
 # frozen_string_literal: true
 
-module EmailAddress
+module AfairEmailAddress
   ##############################################################################
-  # EmailAddress Local part consists of
+  # AfairEmailAddress Local part consists of
   # - comments
   # - mailbox
   # - tag
@@ -107,7 +107,7 @@ module EmailAddress
       %r/^([\w\!\#\$\%\&\'\*\+\-\/\=\?\^\`\{\|\}\~]+)$/i.freeze
 
     def initialize(local, config={}, host=nil)
-      self.config   = config.empty? ? EmailAddress::Config.all_settings : config
+      self.config   = config.empty? ? AfairEmailAddress::Config.all_settings : config
       self.local    = local
       @host         = host
       @error        = @error_message = nil
@@ -388,7 +388,7 @@ module EmailAddress
     def set_error(err, reason=nil)
       @error = err
       @reason= reason
-      @error_message = EmailAddress::Config.error_message(err)
+      @error_message = AfairEmailAddress::Config.error_message(err)
       false
     end
 

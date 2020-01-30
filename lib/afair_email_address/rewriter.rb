@@ -2,7 +2,7 @@
 
 require 'base64'
 
-module EmailAddress::Rewriter
+module AfairEmailAddress::Rewriter
 
   SRS_FORMAT_REGEX   = /\ASRS0=(....)=(\w\w)=(.+?)=(.+?)@(.+)\z/
 

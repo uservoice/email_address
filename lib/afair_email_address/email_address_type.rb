@@ -6,9 +6,9 @@
 # 1) Register your types
 #
 #    # config/initializers/email_address.rb
-#    ActiveRecord::Type.register(:email_address, EmailAddress::Address)
+#    ActiveRecord::Type.register(:email_address, AfairEmailAddress::Address)
 #    ActiveRecord::Type.register(:canonical_email_address,
-#                                EmailAddress::CanonicalEmailAddressType)
+#                                AfairEmailAddress::CanonicalAfairEmailAddressType)
 #
 # 2) Define your email address columns in your model class
 #
@@ -29,20 +29,20 @@
 #    user.canonical_email #=> "patsmith@gmail.com"
 ################################################################################
 
-class EmailAddress::CanonicalEmailAddressType < ActiveRecord::Type::Value
+class AfairEmailAddress::EmailAddressType < ActiveRecord::Type::Value
 
   # From user input, setter
   def cast(value)
-    super(EmailAddress.canonical(value))
+    super(AfairEmailAddress.normal(value))
   end
 
   # From a database value
   def deserialize(value)
-    value && EmailAddress.normal(value)
+    value && AfairEmailAddress.normal(value)
   end
-
+  #
   # To a database value (string)
   def serialize(value)
-    value && EmailAddress.normal(value)
+    value && AfairEmailAddress.normal(value)
   end
 end
