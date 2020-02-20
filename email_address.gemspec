@@ -1,11 +1,11 @@
 # coding: utf-8
 lib = File.expand_path('../lib', __FILE__)
 $LOAD_PATH.unshift(lib) unless $LOAD_PATH.include?(lib)
-require 'email_address/version'
+require 'afair_email_address/version'
 
 Gem::Specification.new do |spec|
   spec.name          = "email_address"
-  spec.version       = EmailAddress::VERSION
+  spec.version       = AfairEmailAddress::VERSION
   spec.authors       = ["Allen Fair"]
   spec.email         = ["allen.fair@gmail.com"]
   spec.description   = %q{The EmailAddress Gem to work with and validate email addresses.}
